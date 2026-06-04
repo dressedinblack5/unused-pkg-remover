@@ -4,24 +4,48 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unused-pkg-remover"
-version = "1.0.0"
+version = "1.1.0"
 description = "GUI tool to find and remove orphaned Arch Linux packages"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
     "PySide6>=6.5",
 ]
-keywords = ["arch-linux", "pacman", "orphan", "package-manager"]
+keywords = ["arch-linux", "pacman", "orphan", "package-manager", "cleanup"]
 classifiers = [
-    "Programming Language :: Python :: 3",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: X11 Applications :: Qt",
     "Intended Audience :: End Users/Desktop",
     "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Systems Administration",
 ]
+
+[project.urls]
+Homepage = "https://github.com/anomalyco/unused-pkg-remover"
+Repository = "https://github.com/anomalyco/unused-pkg-remover"
+"Bug Tracker" = "https://github.com/anomalyco/unused-pkg-remover/issues"
 
 [project.scripts]
 unused-pkg-remover = "unused_pkg_remover:main"
 
 [tool.setuptools.packages.find]
 include = ["unused_pkg_remover*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "ARG"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
