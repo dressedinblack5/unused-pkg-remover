@@ -1,14 +1,23 @@
 # unused-pkg-remover
 
-Scan Arch Linux for orphaned packages and interactively remove them.
+Scan Arch Linux for orphaned packages and remove them via a GUI.
 
 ## Features
 
 - Detects orphan packages (`pacman -Qtdq`)
-- Sorts by installed size (largest first)
-- Marks AUR vs repo packages
-- Colorized output
-- Ignore list support (`~/.unused-ignore` or `./.unused-ignore`)
+- Sorted by installed size (largest first)
+- AUR vs repo package markers
+- Dark theme UI
+- Built-in safe list excludes critical system packages
+- `pkexec`-based removal with polkit authentication
+- Ignore list via `~/.unused-ignore` or `./.unused-ignore`
+- Window geometry remembered between sessions
+
+## Requirements
+
+- Python 3
+- PySide6
+- pacman, expac, pkexec
 
 ## Usage
 
@@ -16,7 +25,7 @@ Scan Arch Linux for orphaned packages and interactively remove them.
 python3 main.py
 ```
 
-Select packages by index (e.g., `0, 2, 5`) and confirm to uninstall.
+Select packages via checkboxes, then click **Remove Selected** or **Add to Ignore**.
 
 ## Ignore List
 
@@ -24,6 +33,6 @@ Create `~/.unused-ignore` or `./.unused-ignore` with one package per line:
 
 ```text
 # packages to protect
-grub
-ntfs-3g
+my-custom-package
+another-package
 ```
