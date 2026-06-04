@@ -84,6 +84,57 @@ nvidia
 Packages can also be added to `./.unused-ignore` directly from the GUI via the
 **Add to Ignore** button.
 
+## How It Works
+
+### Orphan Detection
+
+The tool scans for orphaned packages using `pacman -Qtdq` — packages that were
+installed as dependencies but are no longer required by any explicitly installed
+package. Results are enriched with installed size and description via `expac`.
+
+A built-in safe list of ~100 critical system packages (`scanner.py:26`) is always
+excluded. Additional packages can be excluded via ignore files (see [Ignore List](#ignore-list)).
+
+### Dependency Check
+
+Before removal, the tool checks whether any *other* installed packages depend on
+your selected packages using `pactree -r -u` (reverse unique tree). If `pactree`
+is unavailable, it falls back to parsing `pacman -Qi` output.
+
+If dependents are found, a warning is shown in the confirmation dialog listing
+each package and what depends on it:
+
+```
+Some packages are required by others:
+  libfoo ← firefox, thunderbird
+
+Removing them may break dependent packages.
+```
+
+This is a **warning only** — it does not block removal. The decision is yours.
+
+### Removal Flow
+
+1. **Normal removal** — Selected packages are removed with `pkexec pacman -Rns --noconfirm`.
+   The `-s` flag recursively removes unneeded dependencies of the target packages.
+2. **Dependency conflict** — If pacman refuses because other installed packages
+   depend on the removal targets (common with `-s` recursion), a dialog appears
+   with a **Force Remove (--nodeps)** button.
+3. **Force removal** — Clicking it re-runs the removal with `--nodeps`, which
+   tells pacman to skip all dependency checks. This can break dependent packages.
+
+### CLI `--no-deps` Flag
+
+Passing `--no-deps` from the command line skips the dialog entirely and uses
+`--nodeps` from the start:
+
+```bash
+unused-pkg-remover --no-deps
+```
+
+This is useful when you already know the packages can be safely removed despite
+dependency warnings.
+
 ## Safe List
 
 The tool has a built-in safe list of ~100 packages (`scanner.py:26`) that are
