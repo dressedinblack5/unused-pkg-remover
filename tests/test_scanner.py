@@ -239,7 +239,7 @@ class TestGetDependents:
         with patch("unused_pkg_remover.scanner.shutil.which", return_value=None):
             with patch(sr, return_value=mock_result) as mock_run:
                 result = get_dependents("test-pkg")
-                assert result == ["dep1  dep2", "opt-dep"]
+                assert result == ["dep1", "dep2", "opt-dep"]
                 _, kwargs = mock_run.call_args
                 assert kwargs.get("env", {}).get("LANG") == "C"
 

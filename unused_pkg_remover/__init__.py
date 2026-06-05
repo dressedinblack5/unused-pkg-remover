@@ -5,6 +5,5 @@ from .services import (
     RemovalError,
     add_to_ignore,
     log_removal,
-    remove_packages,
     remove_packages_batch,
 )

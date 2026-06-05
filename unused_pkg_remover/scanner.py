@@ -215,7 +215,7 @@ def get_dependents(pkg_name: str) -> list[str]:
                 if ls.startswith("Required By") or ls.startswith("Optional For"):
                     val = ls.split(":", 1)[-1].strip()
                     if val and val != "None":
-                        deps.append(val)
+                        deps.extend(d for d in val.split() if d)
                 elif ls.startswith("Optional Deps"):
                     break
     return deps
@@ -275,18 +275,24 @@ _CACHE_EXTS = (".pkg.tar.zst", ".pkg.tar.xz", ".pkg.tar.gz", ".pkg.tar.bz2")
 _CACHE_ARCHES = ("-x86_64", "-any", "-i686", "-aarch64")
 
 
+def _get_installed_packages() -> dict[str, str]:
+    result = subprocess.run(["pacman", "-Q"], capture_output=True, text=True)
+    if result.returncode != 0:
+        return {}
+    installed = {}
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2:
+            installed[parts[0].lower()] = parts[1]
+    return installed
+
+
 def get_cache_packages() -> list[dict]:
     cache_dir = Path("/var/cache/pacman/pkg")
     if not cache_dir.exists():
         return []
 
-    result = subprocess.run(["pacman", "-Q"], capture_output=True, text=True)
-    installed = {}
-    if result.returncode == 0:
-        for line in result.stdout.splitlines():
-            parts = line.split()
-            if len(parts) >= 2:
-                installed[parts[0].lower()] = parts[1]
+    installed = _get_installed_packages()
 
     by_name: dict[str, list[Path]] = {}
     for f in cache_dir.iterdir():
@@ -339,24 +345,34 @@ def get_unused_flatpaks() -> list[dict]:
     )
     if result.returncode != 0:
         return []
-    packages = []
+    names = []
     for line in result.stdout.splitlines():
         ls = line.strip()
         if ls and not ls.startswith("These"):
-            size_result = subprocess.run(
-                ["flatpak", "info", "--show-size", ls],
-                capture_output=True,
-                text=True,
-            )
-            size = int(size_result.stdout.strip()) if size_result.returncode == 0 else 0
-            packages.append(
-                {
-                    "name": ls,
-                    "size": size,
-                    "desc": "Unused Flatpak runtime",
-                    "type_tag": "flatpak",
-                }
-            )
+            names.append(ls)
+
+    sizes = {}
+    if names:
+        size_result = subprocess.run(
+            ["flatpak", "info"] + names + ["--show-size"],
+            capture_output=True,
+            text=True,
+        )
+        if size_result.returncode == 0:
+            for line_num, line in enumerate(size_result.stdout.splitlines()):
+                s = line.strip()
+                if s.isdigit() and line_num < len(names):
+                    sizes[names[line_num]] = int(s)
+
+    packages = [
+        {
+            "name": n,
+            "size": sizes.get(n, 0),
+            "desc": "Unused Flatpak runtime",
+            "type_tag": "flatpak",
+        }
+        for n in names
+    ]
     return packages
 
 
@@ -366,25 +382,32 @@ def get_broken_packages() -> list[dict]:
     result = subprocess.run(["pacman", "-Qk"], capture_output=True, text=True)
     if result.returncode != 0:
         return []
-    packages = []
+    names = []
+    descs = {}
     for line in result.stdout.splitlines():
         if "missing" in line or "ERROR" in line:
             name = line.split(":")[0].strip()
             desc = line.split(":", 1)[-1].strip() if ":" in line else "Broken package"
-            size_result = subprocess.run(
-                ["expac", "-Q", "%m", name],
-                capture_output=True,
-                text=True,
-            )
-            size = int(size_result.stdout.strip()) if size_result.returncode == 0 else 0
-            packages.append(
-                {
-                    "name": name,
-                    "size": size,
-                    "desc": desc,
-                    "type_tag": "broken",
-                }
-            )
+            names.append(name)
+            descs[name] = desc
+
+    sizes = [0] * len(names)
+    if names and shutil.which("expac"):
+        size_result = subprocess.run(
+            ["expac", "-Q", "%m"] + names,
+            capture_output=True,
+            text=True,
+        )
+        if size_result.returncode == 0:
+            sizes = [
+                int(s.strip()) if s.strip().isdigit() else 0
+                for s in size_result.stdout.splitlines()
+            ]
+
+    packages = [
+        {"name": n, "size": s, "desc": descs[n], "type_tag": "broken"}
+        for n, s in zip(names, sizes, strict=False)
+    ]
     return packages
 
 
@@ -424,13 +447,7 @@ def get_all_cache_packages() -> list[dict]:
     if not cache_dir.exists():
         return []
 
-    result = subprocess.run(["pacman", "-Q"], capture_output=True, text=True)
-    installed = {}
-    if result.returncode == 0:
-        for line in result.stdout.splitlines():
-            parts = line.split()
-            if len(parts) >= 2:
-                installed[parts[0].lower()] = parts[1]
+    installed = _get_installed_packages()
 
     packages = []
     for f in cache_dir.iterdir():
@@ -595,77 +612,48 @@ def get_obsolete_steam_runtimes() -> list[dict]:
     return packages
 
 
-def get_stale_launcher_runners() -> list[dict]:
+def _scan_runner_dir(root: Path, prefix: str, desc: str, sep: str = ":") -> list[dict]:
+    if not root.exists():
+        return []
     packages = []
-
-    # Lutris runners
-    lutris_runners = Path.home() / ".local" / "share" / "lutris" / "runners"
-    if lutris_runners.exists():
-        for d in lutris_runners.iterdir():
-            if d.is_dir():
-                try:
-                    size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
-                except OSError:
-                    size = 0
-                packages.append(
-                    {
-                        "name": f"lutris:{d.name}",
-                        "size": size,
-                        "desc": "Lutris runner",
-                        "type_tag": "launcher-runner",
-                    }
-                )
-
-    # Heroic Games Launcher runners
-    for runner_type in ["wine", "proton"]:
-        heroic_dir = Path.home() / ".config" / "heroic" / "tools" / "runners" / runner_type
-        if heroic_dir.exists():
-            for d in heroic_dir.iterdir():
-                if d.is_dir():
-                    try:
-                        size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
-                    except OSError:
-                        size = 0
-                    packages.append(
-                        {
-                            "name": f"heroic:{runner_type}/{d.name}",
-                            "size": size,
-                            "desc": "Heroic runner",
-                            "type_tag": "launcher-runner",
-                        }
-                    )
-
-    # Bottles runners
-    bottles_runners = Path.home() / ".local" / "share" / "bottles" / "runners"
-    if bottles_runners.exists():
-        for d in bottles_runners.iterdir():
-            if d.is_dir():
-                try:
-                    size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
-                except OSError:
-                    size = 0
-                packages.append(
-                    {
-                        "name": f"bottles:{d.name}",
-                        "size": size,
-                        "desc": "Bottles runner",
-                        "type_tag": "launcher-runner",
-                    }
-                )
-
-    packages.sort(key=lambda x: x["size"], reverse=True)
+    for d in root.iterdir():
+        if not d.is_dir():
+            continue
+        try:
+            size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+        except OSError:
+            size = 0
+        packages.append(
+            {
+                "name": f"{prefix}{sep}{d.name}",
+                "size": size,
+                "desc": desc,
+                "type_tag": "launcher-runner",
+            }
+        )
     return packages
 
 
-SCAN_MODES: dict[str, tuple[str, ...]] = {
-    "orphans": ("get_unused_packages",),
-    "cache": ("get_cache_packages",),
-    "flatpak": ("get_unused_flatpaks",),
-    "broken": ("get_broken_packages",),
-    "aur-dep": ("get_aur_build_deps",),
-    "all-cache": ("get_all_cache_packages",),
-    "aur-cache": ("get_aur_cache_packages",),
-    "proton-prefix": ("get_orphaned_proton_prefixes",),
-    "steam-runtime": ("get_obsolete_steam_runtimes",),
-    "launcher-runner": ("get_stale_launcher_runners",),
-}
+def get_stale_launcher_runners() -> list[dict]:
+    packages = []
+    packages.extend(
+        _scan_runner_dir(
+            Path.home() / ".local" / "share" / "lutris" / "runners", "lutris", "Lutris runner"
+        )
+    )
+    for rt in ("wine", "proton"):
+        packages.extend(
+            _scan_runner_dir(
+                Path.home() / ".config" / "heroic" / "tools" / "runners" / rt,
+                f"heroic:{rt}",
+                "Heroic runner",
+                sep="/",
+            )
+        )
+    packages.extend(
+        _scan_runner_dir(
+            Path.home() / ".local" / "share" / "bottles" / "runners", "bottles", "Bottles runner"
+        )
+    )
+    packages.sort(key=lambda x: x["size"], reverse=True)
+    return packages
