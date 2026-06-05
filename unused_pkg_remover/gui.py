@@ -1,13 +1,25 @@
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QEventLoop, QObject, QPropertyAnimation, QSettings, Qt, QThread, Signal
+from PySide6.QtCore import (
+    QMutex,
+    QObject,
+    QPropertyAnimation,
+    QSettings,
+    Qt,
+    QThread,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
-    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QHeaderView,
@@ -25,12 +37,52 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .scanner import get_dependents, get_unused_packages
+from .scanner import (
+    get_all_cache_packages,
+    get_aur_build_deps,
+    get_aur_cache_packages,
+    get_broken_packages,
+    get_cache_packages,
+    get_dependents,
+    get_obsolete_steam_runtimes,
+    get_orphaned_proton_prefixes,
+    get_stale_launcher_runners,
+    get_unused_flatpaks,
+    get_unused_packages,
+)
+from .services import (
+    BATCH_SIZE,
+    HISTORY_FILE,
+    RemovalError,
+    add_to_ignore,
+    log_removal,
+    remove_all_cache_packages,
+    remove_aur_cache_packages,
+    remove_aur_deps,
+    remove_cache_packages,
+    remove_flatpak_packages,
+    remove_obsolete_steam_runtimes,
+    remove_orphaned_proton_prefixes,
+    remove_packages_batch,
+    remove_stale_launcher_runners,
+)
+
+_AVAILABLE_MODES: list[tuple[str, str]] = [
+    ("orphans", "Orphans"),
+    ("cache", "Pacman Cache"),
+    ("all-cache", "All Pacman Cache"),
+]
+if shutil.which("flatpak"):
+    _AVAILABLE_MODES.append(("flatpak", "Flatpak Runtimes"))
+_AVAILABLE_MODES.append(("broken", "Broken Packages"))
+if shutil.which("yay") or shutil.which("paru"):
+    _AVAILABLE_MODES.append(("aur-dep", "AUR Build Deps"))
+_AVAILABLE_MODES.append(("aur-cache", "AUR Build Cache"))
+_AVAILABLE_MODES.append(("proton-prefix", "Proton Prefixes"))
+_AVAILABLE_MODES.append(("steam-runtime", "Steam Runtimes"))
+_AVAILABLE_MODES.append(("launcher-runner", "Launcher Runners"))
 
 IGNORE_FILE = Path.cwd() / ".unused-ignore"
-HISTORY_DIR = Path.home() / ".local" / "share" / "unused-pkg-remover"
-HISTORY_FILE = HISTORY_DIR / "history.log"
-BATCH_SIZE = 50
 
 COL_SELECT = 0
 COL_NAME = 1
@@ -38,8 +90,25 @@ COL_SIZE = 2
 COL_TYPE = 3
 COL_DESC = 4
 
+_PROGRESS_STYLE = """
+    QProgressDialog {
+        background-color: #1e1e1e;
+        color: #e0e0e0;
+    }
+    QProgressBar {
+        border: 1px solid #3c3c3c;
+        border-radius: 4px;
+        background-color: #252526;
+        text-align: center;
+    }
+    QProgressBar::chunk {
+        background-color: #58a6ff;
+        border-radius: 3px;
+    }
+"""
 
-def format_size(size_bytes):
+
+def format_size(size_bytes: int) -> str:
     for unit in ["B", "KB", "MB", "GB", "TB"]:
         if size_bytes < 1024:
             return f"{size_bytes:.1f}{unit}"
@@ -47,7 +116,7 @@ def format_size(size_bytes):
     return f"{size_bytes:.1f}PB"
 
 
-def size_color(size):
+def size_color(size: int) -> QColor:
     if size > 100 * 1024 * 1024:
         return QColor("#f97583")
     if size > 10 * 1024 * 1024:
@@ -63,49 +132,118 @@ class NumericTableItem(QTableWidgetItem):
         b = other.data(Qt.UserRole)
         if a is not None and b is not None:
             return a < b
-        return super().__lt__(other)
+        return False
+
+
+class ScanWorker(QObject):
+    finished = Signal(object, int)  # packages list, filtered count
+    error = Signal(str)
+
+    def __init__(self, scan_mode: str) -> None:
+        super().__init__()
+        self.scan_mode = scan_mode
+
+    def run(self) -> None:
+        try:
+            if self.scan_mode == "orphans":
+                packages, filtered = get_unused_packages()
+            elif self.scan_mode == "cache":
+                packages = get_cache_packages()
+                filtered = 0
+            elif self.scan_mode == "all-cache":
+                packages = get_all_cache_packages()
+                filtered = 0
+            elif self.scan_mode == "flatpak":
+                packages = get_unused_flatpaks()
+                filtered = 0
+            elif self.scan_mode == "broken":
+                packages = get_broken_packages()
+                filtered = 0
+            elif self.scan_mode == "aur-dep":
+                packages = get_aur_build_deps()
+                filtered = 0
+            elif self.scan_mode == "aur-cache":
+                packages = get_aur_cache_packages()
+                filtered = 0
+            elif self.scan_mode == "proton-prefix":
+                packages = get_orphaned_proton_prefixes()
+                filtered = 0
+            elif self.scan_mode == "steam-runtime":
+                packages = get_obsolete_steam_runtimes()
+                filtered = 0
+            elif self.scan_mode == "launcher-runner":
+                packages = get_stale_launcher_runners()
+                filtered = 0
+            else:
+                packages = []
+                filtered = 0
+            self.finished.emit(packages, filtered)
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 class RemovalWorker(QObject):
     progress = Signal(str)
     finished = Signal(bool, str)
 
-    def __init__(self, names, batch_size, force=False):
+    def __init__(
+        self, names: list[str], batch_size: int, force: bool = False, mode: str = "orphan"
+    ) -> None:
         super().__init__()
         self.names = names
         self.batch_size = batch_size
         self.force = force
+        self.mode = mode
+        self._cancelled = False
 
-    def run(self):
+    def run(self) -> None:
         try:
-            num_batches = (len(self.names) + self.batch_size - 1) // self.batch_size
-            base = (
-                ["pkexec", "pacman", "-Rns", "--nodeps"]
-                if self.force
-                else ["pkexec", "pacman", "-Rns"]
-            )
-            for i in range(0, len(self.names), self.batch_size):
-                batch = self.names[i : i + self.batch_size]
-                batch_num = i // self.batch_size + 1
-                if num_batches > 1:
-                    self.progress.emit(f"Removing batch {batch_num} of {num_batches}...")
-                else:
-                    self.progress.emit("Removing packages...")
-                subprocess.run(
-                    base + ["--noconfirm"] + batch,
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                )
+            if self.mode == "cache":
+                self.progress.emit("Removing cached packages...")
+                remove_cache_packages(self.names)
+            elif self.mode == "all-cache":
+                self.progress.emit("Removing cached package files...")
+                remove_all_cache_packages(self.names)
+            elif self.mode == "flatpak":
+                self.progress.emit("Removing Flatpak runtimes...")
+                remove_flatpak_packages(self.names)
+            elif self.mode == "aur-dep":
+                self.progress.emit("Cleaning AUR build deps...")
+                remove_aur_deps()
+            elif self.mode == "aur-cache":
+                self.progress.emit("Removing AUR build sources...")
+                remove_aur_cache_packages(self.names)
+            elif self.mode == "proton-prefix":
+                self.progress.emit("Removing Proton prefixes...")
+                remove_orphaned_proton_prefixes(self.names)
+            elif self.mode == "steam-runtime":
+                self.progress.emit("Removing Steam runtimes...")
+                remove_obsolete_steam_runtimes(self.names)
+            elif self.mode == "launcher-runner":
+                self.progress.emit("Removing launcher runners...")
+                remove_stale_launcher_runners(self.names)
+            else:
+                num_batches = (len(self.names) + self.batch_size - 1) // self.batch_size
+                for i in range(0, len(self.names), self.batch_size):
+                    if self._cancelled:
+                        self.finished.emit(False, "Cancelled")
+                        return
+                    batch = self.names[i : i + self.batch_size]
+                    batch_num = i // self.batch_size + 1
+                    if num_batches > 1:
+                        self.progress.emit(f"Removing batch {batch_num} of {num_batches}...")
+                    else:
+                        self.progress.emit("Removing packages...")
+                    remove_packages_batch(batch, self.force)
             self.finished.emit(True, "")
-        except subprocess.CalledProcessError as e:
-            self.finished.emit(False, e.stderr or "Unknown error")
+        except RemovalError as e:
+            self.finished.emit(False, str(e))
         except Exception as e:
             self.finished.emit(False, str(e))
 
 
 class OrphanCleaner(QMainWindow):
-    def __init__(self, dry_run=False, force_remove=False):
+    def __init__(self, dry_run: bool = False, force_remove: bool = False) -> None:
         super().__init__()
         self.packages = []
         self.dry_run = dry_run
@@ -113,8 +251,14 @@ class OrphanCleaner(QMainWindow):
         self._last_filtered = 0
         self._removal_thread = None
         self._removal_worker = None
+        self._scan_thread = None
+        self._scan_worker = None
         self._removal_running = False
         self._force_attempted = False
+        self._loading = False
+        self._scan_mode = "orphans"
+        self._load_gen = 0
+        self._mutex = QMutex()
         title = "Unused Package Remover"
         if dry_run:
             title = f"[DRY RUN] {title}"
@@ -125,7 +269,7 @@ class OrphanCleaner(QMainWindow):
         self.resize(900, 500)
         self._setup_ui()
         self._load_settings()
-        self._load_packages()
+        QTimer.singleShot(0, self._load_packages)
 
     def _setup_ui(self):
         central = QWidget()
@@ -151,6 +295,39 @@ class OrphanCleaner(QMainWindow):
             }
         """)
         layout.addWidget(self.warning)
+
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(8)
+        mode_label = QLabel("Scan mode:")
+        mode_label.setStyleSheet("color: #9e9e9e; font-size: 13px;")
+        mode_row.addWidget(mode_label)
+        self.mode_combo = QComboBox()
+        self._mode_keys = [k for k, _ in _AVAILABLE_MODES]
+        for _, label in _AVAILABLE_MODES:
+            self.mode_combo.addItem(label)
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        self.mode_combo.setStyleSheet("""
+            QComboBox {
+                background-color: #252526;
+                color: #e0e0e0;
+                border: 1px solid #3c3c3c;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 13px;
+                min-width: 180px;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #252526;
+                color: #e0e0e0;
+                selection-background-color: #264f78;
+            }
+        """)
+        mode_row.addWidget(self.mode_combo)
+        mode_row.addStretch()
+        layout.addLayout(mode_row)
 
         search_row = QHBoxLayout()
         search_row.setSpacing(8)
@@ -197,16 +374,7 @@ class OrphanCleaner(QMainWindow):
         self.table.verticalHeader().setDefaultSectionSize(26)
         layout.addWidget(self.table)
 
-        container = QWidget()
-        cb_layout = QHBoxLayout(container)
-        cb_layout.setContentsMargins(0, 0, 0, 0)
-        cb_layout.setAlignment(Qt.AlignCenter)
-        self.select_all_cb = QCheckBox(container)
-        self.select_all_cb.stateChanged.connect(self._toggle_select_all)
-        self.select_all_cb.setToolTip("Select / deselect all visible packages")
-        cb_layout.addWidget(self.select_all_cb)
-        hdr = self.table.horizontalHeader()
-        hdr.setIndexWidget(hdr.model().index(0, COL_SELECT), container)
+        self._select_all_row = None
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
@@ -230,10 +398,16 @@ class OrphanCleaner(QMainWindow):
         self.btn_refresh.setProperty("class", "default")
         self.btn_refresh.clicked.connect(self._load_packages)
 
+        self.btn_history = QPushButton("History")
+        self.btn_history.setProperty("class", "default")
+        self.btn_history.clicked.connect(self._show_history)
+
         btn_row.addWidget(self.btn_remove)
         btn_row.addWidget(self.btn_ignore)
+        btn_row.addStretch()
         btn_row.addWidget(self.btn_deselect)
         btn_row.addStretch()
+        btn_row.addWidget(self.btn_history)
         btn_row.addWidget(self.btn_refresh)
         layout.addLayout(btn_row)
 
@@ -257,82 +431,170 @@ class OrphanCleaner(QMainWindow):
         if self._removal_running:
             event.ignore()
             return
+        self._cleanup_scan_thread()
         self._save_settings()
         event.accept()
 
     def _load_packages(self):
+        if self._removal_running or self._loading:
+            return
+        self._load_gen += 1
+        self._cleanup_scan_thread()
+        self._loading = True
         self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
-        self.status_bar.showMessage("Updating list...")
+        mode_label = self.mode_combo.currentText()
+        self.status_bar.showMessage(f"Scanning {mode_label.lower()}...")
         self.table.setEnabled(False)
         effect = QGraphicsOpacityEffect(self.table)
         self.table.setGraphicsEffect(effect)
-        anim = QPropertyAnimation(effect, b"opacity")
-        anim.setDuration(120)
-        anim.setStartValue(1.0)
-        anim.setEndValue(0.25)
-        loop = QEventLoop()
-        anim.finished.connect(loop.quit)
-        anim.start()
-        loop.exec()
+        self._fade_anim = QPropertyAnimation(effect, b"opacity")
+        self._fade_anim.setDuration(120)
+        self._fade_anim.setStartValue(1.0)
+        self._fade_anim.setEndValue(0.25)
+        self._fade_anim.finished.connect(self._do_load_packages)
+        self._fade_anim.start()
 
-        try:
-            self.packages, filtered = get_unused_packages()
-        except RuntimeError as e:
-            QMessageBox.critical(self, "Error", str(e))
-            self.packages = []
-            filtered = 0
-        self.table.setRowCount(len(self.packages))
+    def _on_mode_changed(self, index: int) -> None:
+        self._scan_mode = self._mode_keys[index]
+        self.btn_ignore.setVisible(self._scan_mode == "orphans")
+        self._load_packages()
+
+    def _do_load_packages(self):
+        if self._scan_thread is not None:
+            return
+        self._scan_thread = QThread()
+        self._scan_worker = ScanWorker(self._scan_mode)
+        self._scan_worker.moveToThread(self._scan_thread)
+        self._scan_thread.started.connect(self._scan_worker.run)
+        self._scan_worker.finished.connect(self._on_scan_finished)
+        self._scan_worker.error.connect(self._on_scan_error)
+        self._scan_thread.start()
+
+    def _on_scan_finished(self, packages: list[dict], filtered: int) -> None:
+        self._cleanup_scan_thread()
+        self.packages = packages
+
+        row_count = len(self.packages) + 1  # +1 for select-all row
+        self.table.setRowCount(row_count)
+        self._select_all_row = 0
+
+        type_colors = {
+            "AUR": "#ff7b72",
+            "repo": "#7ee787",
+            "cache": "#d2a8ff",
+            "flatpak": "#79c0ff",
+            "broken": "#ff7b72",
+            "aur-dep": "#ffab70",
+            "aur-cache": "#79c0ff",
+            "proton-prefix": "#ff7b72",
+            "steam-runtime": "#d2a8ff",
+            "launcher-runner": "#ffab70",
+        }
+
+        # Select-all header row
+        chk = QTableWidgetItem()
+        chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+        chk.setCheckState(Qt.Unchecked)
+        chk.setData(Qt.UserRole, -1)
+        self.table.setItem(0, COL_SELECT, chk)
+
+        name_item = QTableWidgetItem("Select All")
+        font = name_item.font()
+        font.setBold(True)
+        name_item.setFont(font)
+        self.table.setItem(0, COL_NAME, name_item)
+
+        desc_item = QTableWidgetItem("Check / uncheck all visible packages")
+        desc_item.setToolTip("Check or uncheck all packages in the list")
+        self.table.setItem(0, COL_DESC, desc_item)
 
         for i, pkg in enumerate(self.packages):
+            row = i + 1
             chk = QTableWidgetItem()
             chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             chk.setCheckState(Qt.Unchecked)
             chk.setData(Qt.UserRole, i)
-            self.table.setItem(i, COL_SELECT, chk)
+            self.table.setItem(row, COL_SELECT, chk)
 
             name_item = QTableWidgetItem(pkg["name"])
             name_item.setToolTip(pkg["name"])
-            self.table.setItem(i, COL_NAME, name_item)
+            self.table.setItem(row, COL_NAME, name_item)
 
             size_str = format_size(pkg["size"])
             size_item = NumericTableItem(size_str)
             size_item.setForeground(size_color(pkg["size"]))
             size_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             size_item.setData(Qt.UserRole, pkg["size"])
-            self.table.setItem(i, COL_SIZE, size_item)
+            self.table.setItem(row, COL_SIZE, size_item)
 
-            type_item = QTableWidgetItem("AUR" if pkg["is_aur"] else "repo")
-            type_item.setForeground(QColor("#ff7b72") if pkg["is_aur"] else QColor("#7ee787"))
-            self.table.setItem(i, COL_TYPE, type_item)
+            tag = pkg.get("type_tag", "AUR" if pkg.get("is_aur") else "repo")
+            type_item = QTableWidgetItem(tag)
+            type_item.setForeground(QColor(type_colors.get(tag, "#9e9e9e")))
+            self.table.setItem(row, COL_TYPE, type_item)
 
             desc = pkg["desc"]
             desc_item = QTableWidgetItem(desc[:120] + "..." if len(desc) > 120 else desc)
             desc_item.setToolTip(desc)
-            self.table.setItem(i, COL_DESC, desc_item)
+            self.table.setItem(row, COL_DESC, desc_item)
 
         self.table.setSortingEnabled(True)
 
         effect2 = QGraphicsOpacityEffect(self.table)
         self.table.setGraphicsEffect(effect2)
-        anim2 = QPropertyAnimation(effect2, b"opacity")
-        anim2.setDuration(120)
-        anim2.setStartValue(0.25)
-        anim2.setEndValue(1.0)
-        loop2 = QEventLoop()
-        anim2.finished.connect(loop2.quit)
-        anim2.finished.connect(lambda: self.table.setEnabled(True))
-        anim2.start()
-        loop2.exec()
+        self._fade_anim2 = QPropertyAnimation(effect2, b"opacity")
+        self._fade_anim2.setDuration(120)
+        self._fade_anim2.setStartValue(0.25)
+        self._fade_anim2.setEndValue(1.0)
+        self._fade_anim2.finished.connect(lambda: self._finish_load(filtered))
+        self._fade_anim2.start()
 
+    def _on_scan_error(self, msg: str) -> None:
+        self._cleanup_scan_thread()
+        QMessageBox.critical(self, "Scan Error", msg)
+        self.packages = []
+        filtered = 0
+        self.table.setRowCount(0)
+        self.table.setSortingEnabled(True)
+        self._fade_anim2 = QPropertyAnimation(QGraphicsOpacityEffect(self.table), b"opacity")
+        self._fade_anim2.setDuration(1)
+        self._fade_anim2.finished.connect(lambda: self._finish_load(filtered))
+        self._fade_anim2.start()
+
+    def _cleanup_scan_thread(self) -> None:
+        if self._scan_worker is not None:
+            self._scan_worker.finished.disconnect()
+            self._scan_worker.error.disconnect()
+            self._scan_worker.deleteLater()
+        if self._scan_thread is not None:
+            self._scan_thread.quit()
+            self._scan_thread.wait(5000)
+            self._scan_thread.deleteLater()
+        self._scan_thread = None
+        self._scan_worker = None
+
+    def _finish_load(self, filtered):
+        self._loading = False
         self.table.setGraphicsEffect(None)
-
+        self.table.setEnabled(True)
         self._last_filtered = filtered
         self._update_status_bar(filtered=filtered)
         self._update_buttons()
+        if self.search.text():
+            self._filter_packages(self.search.text())
 
     def _on_item_changed(self, item):
         if item.column() == COL_SELECT:
+            role = item.data(Qt.UserRole)
+            if role == -1:
+                checked = item.checkState() == Qt.Checked
+                self.table.blockSignals(True)
+                for row in range(1, self.table.rowCount()):
+                    if not self.table.isRowHidden(row):
+                        chk = self.table.item(row, COL_SELECT)
+                        if chk:
+                            chk.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+                self.table.blockSignals(False)
             self._update_buttons()
 
     def _update_buttons(self):
@@ -349,17 +611,19 @@ class OrphanCleaner(QMainWindow):
             filtered = self._last_filtered
         total_size = sum(p["size"] for p in self.packages)
         total_str = format_size(total_size)
-        parts = [f"{len(self.packages)} packages", f"{total_str} reclaimable"]
+        num = len(self.packages)
+        parts = [f"{num} package{'s' if num != 1 else ''}", f"{total_str} reclaimable"]
         if filtered:
             parts.append(f"{filtered} excluded")
         self.status_bar.showMessage(" \u00b7 ".join(parts))
 
     def _filter_packages(self, text):
-        for row in range(self.table.rowCount()):
+        for row in range(1, self.table.rowCount()):
             item = self.table.item(row, COL_NAME)
             if item:
                 visible = text.lower() in item.text().lower() if text else True
                 self.table.setRowHidden(row, not visible)
+        self.table.setRowHidden(0, False)
         visible_count = sum(
             1 for row in range(self.table.rowCount()) if not self.table.isRowHidden(row)
         )
@@ -370,20 +634,9 @@ class OrphanCleaner(QMainWindow):
             self._update_status_bar()
         self._update_checkbox_state()
 
-    def _toggle_select_all(self, state):
-        checked = state == Qt.Checked
-        self.table.blockSignals(True)
-        for row in range(self.table.rowCount()):
-            if not self.table.isRowHidden(row):
-                item = self.table.item(row, COL_SELECT)
-                if item:
-                    item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
-        self.table.blockSignals(False)
-        self._update_buttons()
-
     def _deselect_all(self):
         self.table.blockSignals(True)
-        for row in range(self.table.rowCount()):
+        for row in range(1, self.table.rowCount()):
             item = self.table.item(row, COL_SELECT)
             if item:
                 item.setCheckState(Qt.Unchecked)
@@ -391,26 +644,28 @@ class OrphanCleaner(QMainWindow):
         self._update_buttons()
 
     def _update_checkbox_state(self):
-        self.select_all_cb.blockSignals(True)
-        visible = 0
-        checked = 0
-        for row in range(self.table.rowCount()):
+        visible_data = 0
+        checked_data = 0
+        for row in range(1, self.table.rowCount()):
             if not self.table.isRowHidden(row):
-                visible += 1
+                visible_data += 1
                 item = self.table.item(row, COL_SELECT)
                 if item and item.checkState() == Qt.Checked:
-                    checked += 1
-        if visible == 0 or checked == 0:
-            self.select_all_cb.setCheckState(Qt.Unchecked)
-        elif checked == visible:
-            self.select_all_cb.setCheckState(Qt.Checked)
-        else:
-            self.select_all_cb.setCheckState(Qt.PartiallyChecked)
-        self.select_all_cb.blockSignals(False)
+                    checked_data += 1
+        sel_item = self.table.item(0, COL_SELECT)
+        if sel_item is not None:
+            sel_item.blockSignals(True)
+            if visible_data == 0 or checked_data == 0:
+                sel_item.setCheckState(Qt.Unchecked)
+            elif checked_data == visible_data:
+                sel_item.setCheckState(Qt.Checked)
+            else:
+                sel_item.setCheckState(Qt.PartiallyChecked)
+            sel_item.blockSignals(False)
 
     def _checked_count(self):
         c = 0
-        for row in range(self.table.rowCount()):
+        for row in range(1, self.table.rowCount()):
             item = self.table.item(row, COL_SELECT)
             if item and item.checkState() == Qt.Checked:
                 c += 1
@@ -418,7 +673,7 @@ class OrphanCleaner(QMainWindow):
 
     def _checked_indices(self):
         idxs = []
-        for row in range(self.table.rowCount()):
+        for row in range(1, self.table.rowCount()):
             item = self.table.item(row, COL_SELECT)
             if item and item.checkState() == Qt.Checked:
                 idx = item.data(Qt.UserRole)
@@ -437,6 +692,70 @@ class OrphanCleaner(QMainWindow):
                 dependents[name] = deps
         return dependents
 
+    def _show_removal_details(
+        self, pkgs: list[dict], total_size: int, dep_warning: str, dry_run: bool = False
+    ) -> bool:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Dry Run" if dry_run else "Confirm Removal")
+        dialog.setMinimumSize(550, 400)
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(10)
+
+        header = QLabel(
+            f"[DRY RUN] Would remove {len(pkgs)} packages"
+            if dry_run
+            else f"Remove {len(pkgs)} packages?"
+        )
+        header.setStyleSheet("font-size: 14px; font-weight: 600; color: #e0e0e0;")
+        layout.addWidget(header)
+
+        if dep_warning:
+            dep_label = QLabel(f"\u26a0  Dependency warnings:\n{dep_warning}")
+            dep_label.setWordWrap(True)
+            dep_label.setStyleSheet(
+                "background-color: #3a2a00; color: #ffcc66; padding: 8px; border-radius: 4px;"
+            )
+            layout.addWidget(dep_label)
+
+        table = QTableWidget()
+        table.setColumnCount(3)
+        table.setHorizontalHeaderLabels(["Package", "Size", "Type"])
+        table.setSelectionMode(QAbstractItemView.NoSelection)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.verticalHeader().setVisible(False)
+        table.setAlternatingRowColors(True)
+        table.setRowCount(len(pkgs))
+        table.horizontalHeader().setStretchLastSection(True)
+        table.setColumnWidth(1, 90)
+        table.setColumnWidth(2, 70)
+
+        for i, pkg in enumerate(pkgs):
+            table.setItem(i, 0, QTableWidgetItem(pkg["name"]))
+            size_item = QTableWidgetItem(format_size(pkg["size"]))
+            size_item.setForeground(size_color(pkg["size"]))
+            size_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            table.setItem(i, 1, size_item)
+            tag = pkg.get("type_tag", "AUR" if pkg.get("is_aur") else "repo")
+            table.setItem(i, 2, QTableWidgetItem(tag))
+
+        layout.addWidget(table)
+
+        total_label = QLabel(f"Total reclaimable: {format_size(total_size)}")
+        total_label.setStyleSheet("font-size: 13px; color: #7ee787; font-weight: 600;")
+        layout.addWidget(total_label)
+
+        buttons = QDialogButtonBox()
+        if dry_run:
+            buttons.setStandardButtons(QDialogButtonBox.Ok)
+        else:
+            buttons.addButton("Remove", QDialogButtonBox.AcceptRole)
+            buttons.addButton(QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        return dialog.exec() == QDialog.Accepted
+
     def _remove_selected(self):
         if self._removal_running:
             return
@@ -448,62 +767,27 @@ class OrphanCleaner(QMainWindow):
         sel_size = sum(p["size"] for p in pkgs)
 
         dep_warning = ""
-        dependents = self._check_dependents(names)
-        if dependents:
-            dep_lines = []
-            for pkg, deps in dependents.items():
-                dep_lines.append(f"  {pkg} \u2190 {', '.join(deps)}")
-            dep_warning = (
-                "\u26a0  Some packages are required by others:\n"
-                + "\n".join(dep_lines)
-                + "\n\nRemoving them may break dependent packages.\n\n"
-            )
+        if self._scan_mode == "orphans":
+            dependents = self._check_dependents(names)
+            if dependents:
+                dep_lines = []
+                for pkg, deps in dependents.items():
+                    dep_lines.append(f"{pkg} \u2190 {', '.join(deps)}")
+                dep_warning = "\n".join(dep_lines)
 
-        lines = "\n".join(f"  \u2022 {p['name']} ({format_size(p['size'])})" for p in pkgs)
-
-        if self.dry_run:
-            msg = (
-                f"[DRY RUN] Would remove {len(pkgs)} packages\n\n"
-                f"{dep_warning}"
-                f"{lines}\n\n"
-                f"Total: {format_size(sel_size)}"
-            )
-            QMessageBox.information(self, "Dry Run", msg)
+        if self.dry_run and self._scan_mode == "orphans":
+            self._show_removal_details(pkgs, sel_size, dep_warning, dry_run=True)
             return
 
-        msg = (
-            f"Remove {len(pkgs)} packages?\n\n"
-            f"{dep_warning}"
-            f"{lines}\n\n"
-            f"Total: {format_size(sel_size)}"
-        )
-        confirm = QMessageBox.question(
-            self, "Confirm Removal", msg, QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-        )
-        if confirm != QMessageBox.Yes:
+        if not self._show_removal_details(pkgs, sel_size, dep_warning):
             return
 
-        progress = QProgressDialog("Removing packages...", "", 0, 0, self)
+        progress = QProgressDialog("Removing packages...", "Cancel", 0, 0, self)
         progress.setWindowTitle("Uninstalling")
-        progress.setCancelButton(None)
         progress.setMinimumDuration(0)
         progress.setWindowModality(Qt.WindowModal)
-        progress.setStyleSheet("""
-            QProgressDialog {
-                background-color: #1e1e1e;
-                color: #e0e0e0;
-            }
-            QProgressBar {
-                border: 1px solid #3c3c3c;
-                border-radius: 4px;
-                background-color: #252526;
-                text-align: center;
-            }
-            QProgressBar::chunk {
-                background-color: #58a6ff;
-                border-radius: 3px;
-            }
-        """)
+        progress.canceled.connect(self._cancel_removal)
+        progress.setStyleSheet(_PROGRESS_STYLE)
         progress.show()
 
         self.setEnabled(False)
@@ -512,7 +796,9 @@ class OrphanCleaner(QMainWindow):
         self._removal_running = True
 
         self._removal_thread = QThread()
-        self._removal_worker = RemovalWorker(names, BATCH_SIZE, force=self.force_remove)
+        self._removal_worker = RemovalWorker(
+            names, BATCH_SIZE, force=self.force_remove, mode=self._scan_mode
+        )
         self._removal_worker.moveToThread(self._removal_thread)
         self._removal_thread.started.connect(self._removal_worker.run)
         self._removal_worker.progress.connect(progress.setLabelText)
@@ -524,13 +810,7 @@ class OrphanCleaner(QMainWindow):
         self.setEnabled(True)
 
         if success:
-            HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-            with open(HISTORY_FILE, "a") as f:
-                from datetime import datetime
-
-                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                for pkg in self._removal_pkgs:
-                    f.write(f"{ts} | REMOVED | {pkg['name']} | {format_size(pkg['size'])}\n")
+            log_removal(self._removal_pkgs)
             self._cleanup_thread()
             self._removal_running = False
             self._force_attempted = False
@@ -543,14 +823,18 @@ class OrphanCleaner(QMainWindow):
                 QMessageBox.warning(
                     self,
                     "Force Removal Failed",
-                    "Force removal also failed due to dependency conflicts.\n\n"
-                    f"{error_msg}",
+                    f"Force removal also failed due to dependency conflicts.\n\n{error_msg}",
                 )
             else:
                 self._force_attempted = True
                 self._handle_dep_conflict(error_msg)
+        elif error_msg == "Cancelled":
+            self.status_bar.showMessage("Removal cancelled.")
+            self._cleanup_thread()
+            self._removal_running = False
+            self._force_attempted = False
         else:
-            self.status_bar.showMessage("Removal failed or cancelled.")
+            self.status_bar.showMessage("Removal failed.")
             QMessageBox.warning(
                 self, "Removal Failed", f"Failed to remove packages.\n\n{error_msg}"
             )
@@ -559,16 +843,20 @@ class OrphanCleaner(QMainWindow):
             self._force_attempted = False
 
     def _cleanup_thread(self):
+        if self._removal_worker is not None:
+            self._removal_worker.progress.disconnect()
+            self._removal_worker.finished.disconnect()
+            self._removal_worker.deleteLater()
         if self._removal_thread is not None:
             self._removal_thread.quit()
             self._removal_thread.wait(5000)
+            self._removal_thread.deleteLater()
             self._removal_thread = None
-        if self._removal_worker is not None:
-            self._removal_worker = None
+        self._removal_worker = None
 
     def _handle_dep_conflict(self, error_msg):
         dep_lines = []
-        removed = {p['name'] for p in self._removal_pkgs}
+        removed = {p["name"] for p in self._removal_pkgs}
         involved = set()
         for line in error_msg.splitlines():
             ls = line.strip()
@@ -595,27 +883,12 @@ class OrphanCleaner(QMainWindow):
 
         if msg.clickedButton() == force_btn:
             names = [p["name"] for p in self._removal_pkgs]
-            progress = QProgressDialog("Force removing packages...", "", 0, 0, self)
+            progress = QProgressDialog("Force removing packages...", "Cancel", 0, 0, self)
             progress.setWindowTitle("Uninstalling")
-            progress.setCancelButton(None)
             progress.setMinimumDuration(0)
             progress.setWindowModality(Qt.WindowModal)
-            progress.setStyleSheet("""
-                QProgressDialog {
-                    background-color: #1e1e1e;
-                    color: #e0e0e0;
-                }
-                QProgressBar {
-                    border: 1px solid #3c3c3c;
-                    border-radius: 4px;
-                    background-color: #252526;
-                    text-align: center;
-                }
-                QProgressBar::chunk {
-                    background-color: #58a6ff;
-                    border-radius: 3px;
-                }
-            """)
+            progress.canceled.connect(self._cancel_removal)
+            progress.setStyleSheet(_PROGRESS_STYLE)
             progress.show()
 
             self.setEnabled(False)
@@ -632,18 +905,133 @@ class OrphanCleaner(QMainWindow):
             self._removal_running = False
             self._force_attempted = False
 
+    def _cancel_removal(self):
+        self._mutex.lock()
+        worker = self._removal_worker
+        self._mutex.unlock()
+        if worker is not None:
+            worker._cancelled = True
+        self.status_bar.showMessage("Cancelling removal...")
+
     def _add_to_ignore(self):
+        if self._removal_running:
+            return
         pkgs = self._checked_packages()
         if not pkgs:
             return
 
         names = [p["name"] for p in pkgs]
-        with open(IGNORE_FILE, "a") as f:
-            for name in names:
-                f.write(f"{name}\n")
+        add_to_ignore(IGNORE_FILE, names)
 
         self._load_packages()
         self.status_bar.showMessage(f"Added {len(names)} packages to {IGNORE_FILE}")
+
+    def _show_history(self) -> None:
+        if not HISTORY_FILE.exists():
+            QMessageBox.information(self, "History", "No removal history found.")
+            return
+
+        entries = HISTORY_FILE.read_text().strip().splitlines()
+        if not entries:
+            QMessageBox.information(self, "History", "No removal history found.")
+            return
+
+        parsed = []
+        for line in entries:
+            parts = line.split(" | ")
+            if len(parts) >= 3:
+                parsed.append({"ts": parts[0], "name": parts[2], "raw": line})
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Removal History")
+        dialog.setMinimumSize(600, 400)
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(10)
+
+        header = QLabel(f"{len(parsed)} packages removed")
+        header.setStyleSheet("font-size: 14px; font-weight: 600; color: #e0e0e0;")
+        layout.addWidget(header)
+
+        table = QTableWidget()
+        table.setColumnCount(3)
+        table.setHorizontalHeaderLabels(["Timestamp", "Package", "Action"])
+        table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.verticalHeader().setVisible(False)
+        table.setAlternatingRowColors(True)
+        table.setRowCount(len(parsed))
+        table.horizontalHeader().setStretchLastSection(True)
+        table.setColumnWidth(0, 180)
+
+        for i, entry in enumerate(parsed):
+            table.setItem(i, 0, QTableWidgetItem(entry["ts"]))
+            table.setItem(i, 1, QTableWidgetItem(entry["name"]))
+            table.setItem(i, 2, QTableWidgetItem("removed"))
+
+        layout.addWidget(table)
+
+        btn_layout = QHBoxLayout()
+        btn_reinstall = QPushButton("Reinstall Selected")
+        btn_reinstall.setProperty("class", "primary")
+        btn_reinstall.clicked.connect(lambda: self._reinstall_from_history(table, parsed, dialog))
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(dialog.accept)
+        btn_layout.addWidget(btn_reinstall)
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_close)
+        layout.addLayout(btn_layout)
+
+        dialog.exec()
+
+    def _reinstall_from_history(
+        self, table: QTableWidget, parsed: list[dict], dialog: QDialog
+    ) -> None:
+        selected = set()
+        for item in table.selectedItems():
+            row = item.row()
+            selected.add(parsed[row]["name"])
+
+        if not selected:
+            QMessageBox.information(self, "Reinstall", "No packages selected.")
+            return
+
+        names = sorted(selected)
+        confirm = QMessageBox.question(
+            self,
+            "Reinstall Packages",
+            f"Reinstall {len(names)} packages?\n\n"
+            + "\n".join(f"  \u2022 {n}" for n in names)
+            + "\n\nThis will run: pacman -S <packages>",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        progress = QProgressDialog("Reinstalling packages...", None, 0, 0, self)
+        progress.setWindowTitle("Reinstalling")
+        progress.setMinimumDuration(0)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setStyleSheet(_PROGRESS_STYLE)
+        progress.show()
+
+        try:
+            subprocess.run(
+                ["pkexec", "pacman", "-S", "--noconfirm"] + names,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            progress.close()
+            QMessageBox.information(
+                self, "Reinstall", f"Successfully reinstalled {len(names)} packages."
+            )
+            dialog.accept()
+        except subprocess.CalledProcessError as e:
+            progress.close()
+            QMessageBox.warning(
+                self, "Reinstall Failed", f"Failed to reinstall packages.\n\n{e.stderr or str(e)}"
+            )
 
 
 def apply_dark_theme(app):
@@ -786,7 +1174,7 @@ def apply_dark_theme(app):
     """)
 
 
-def run_gui(dry_run=False, force_remove=False):
+def run_gui(dry_run: bool = False, force_remove: bool = False) -> None:
     app = QApplication(sys.argv)
     app.setApplicationName("Unused Package Remover")
     app.setOrganizationName("unused-pkg-remover")

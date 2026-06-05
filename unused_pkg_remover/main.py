@@ -4,7 +4,7 @@ import os
 import sys
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Remove orphaned Arch Linux packages")
     parser.add_argument(
         "--dry-run",
