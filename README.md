@@ -6,7 +6,7 @@ Steam/Proton junk, and more.
 
 ## Features
 
-### 9 Scan Modes
+### 10 Scan Modes
 
 | Mode | What It Finds |
 |------|--------------|
@@ -158,7 +158,7 @@ unused-pkg-remover/
 │   ├── scanner.py             # All scanning functions (orphans, cache, flatpak, broken, Steam, …)
 │   └── services.py            # Removal, logging, ignore operations
 ├── tests/
-│   ├── test_scanner.py        # 40+ tests with mocked subprocess
+│   ├── test_scanner.py        # Tests for all scan modes with mocked subprocess
 │   ├── test_services.py       # Service layer tests
 │   ├── test_main.py           # CLI argument tests
 │   └── test_gui_utils.py      # Formatting/sorting utility tests
