@@ -1,5 +1,9 @@
 # unused-pkg-remover
 
+<p align="center">
+  <img src="assets/unused-pkg-remover.png" alt="unused-pkg-remover icon" width="128">
+</p>
+
 A PySide6 GUI tool to find and remove unused space on Arch Linux — orphan
 packages, pacman cache, Flatpak runtimes, broken packages, AUR build deps,
 Steam/Proton junk, and more.
