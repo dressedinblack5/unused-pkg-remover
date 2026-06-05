@@ -1,6 +1,7 @@
 import os
+import re
+import shutil
 import subprocess
-from collections.abc import Generator
 from pathlib import Path
 
 
@@ -24,23 +25,18 @@ def remove_packages_batch(names: list[str], force: bool = False) -> None:
             check=True,
             capture_output=True,
             text=True,
+            env={**os.environ, "LANG": "C"},
         )
     except subprocess.CalledProcessError as e:
         raise RemovalError(e.stderr or str(e)) from e
 
 
-def remove_packages(
-    names: list[str], batch_size: int = BATCH_SIZE, force: bool = False
-) -> Generator[str, None, None]:
-    num_batches = (len(names) + batch_size - 1) // batch_size
-    for i in range(0, len(names), batch_size):
-        batch = names[i : i + batch_size]
-        batch_num = i // batch_size + 1
-        if num_batches > 1:
-            yield f"Removing batch {batch_num} of {num_batches}..."
-        else:
-            yield "Removing packages..."
-        remove_packages_batch(batch, force)
+def _format_size(size_bytes: int) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size_bytes < 1024.0:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024.0
+    return f"{size_bytes:.1f} PB"
 
 
 def log_removal(packages: list[dict]) -> None:
@@ -50,7 +46,8 @@ def log_removal(packages: list[dict]) -> None:
 
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         for pkg in packages:
-            f.write(f"{ts} | REMOVED | {pkg['name']} | {pkg['size']}B\n")
+            size_str = _format_size(pkg["size"])
+            f.write(f"{ts} | REMOVED | {pkg['name']} | {size_str}\n")
 
 
 def add_to_ignore(ignore_file_path: Path, package_names: list[str]) -> None:
@@ -63,8 +60,9 @@ def remove_cache_packages(names: list[str]) -> None:
     cache_dir = Path("/var/cache/pacman/pkg")
     files = []
     for name in names:
+        pattern = re.compile(rf"^{re.escape(name)}-\d")
         for f in cache_dir.iterdir():
-            if f.name.startswith(name + "-"):
+            if pattern.match(f.name):
                 files.append(str(f))
     if not files:
         return
@@ -92,13 +90,14 @@ def remove_flatpak_packages(names: list[str]) -> None:
 
 
 def remove_aur_deps() -> None:
+    if shutil.which("yay"):
+        cmd = ["yay", "-Yc", "--noconfirm"]
+    elif shutil.which("paru"):
+        cmd = ["paru", "-c", "--noconfirm"]
+    else:
+        raise RemovalError("No AUR helper found (yay or paru)")
     try:
-        subprocess.run(
-            ["yay", "-Yc", "--noconfirm"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
         raise RemovalError(e.stderr or str(e)) from e
 
@@ -135,19 +134,11 @@ def remove_aur_cache_packages(names: list[str]) -> None:
             target = root / name
             if target.exists():
                 try:
-                    import shutil
-
                     shutil.rmtree(target)
                 except OSError as e:
                     errors.append(str(e))
     if errors:
         raise RemovalError("; ".join(errors))
-
-
-def _rmtree_safe(target: Path) -> None:
-    import shutil
-
-    shutil.rmtree(target)
 
 
 def remove_orphaned_proton_prefixes(names: list[str]) -> None:
@@ -157,7 +148,7 @@ def remove_orphaned_proton_prefixes(names: list[str]) -> None:
         target = compatdata / name
         if target.exists():
             try:
-                _rmtree_safe(target)
+                shutil.rmtree(target)
             except OSError as e:
                 errors.append(str(e))
     if errors:
@@ -171,7 +162,7 @@ def remove_obsolete_steam_runtimes(names: list[str]) -> None:
         target = common_dir / name
         if target.exists():
             try:
-                _rmtree_safe(target)
+                shutil.rmtree(target)
             except OSError as e:
                 errors.append(str(e))
     if errors:
@@ -197,7 +188,7 @@ def remove_stale_launcher_runners(names: list[str]) -> None:
             continue
         if target.exists():
             try:
-                _rmtree_safe(target)
+                shutil.rmtree(target)
             except OSError as e:
                 errors.append(str(e))
     if errors:

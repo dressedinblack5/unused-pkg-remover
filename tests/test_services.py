@@ -16,7 +16,6 @@ from unused_pkg_remover.services import (
     remove_flatpak_packages,
     remove_obsolete_steam_runtimes,
     remove_orphaned_proton_prefixes,
-    remove_packages,
     remove_packages_batch,
     remove_stale_launcher_runners,
 )
@@ -26,61 +25,30 @@ class TestRemovePackagesBatch:
     def test_runs_subprocess_without_force(self):
         with patch("unused_pkg_remover.services.subprocess.run") as mock_run:
             remove_packages_batch(["pkg1", "pkg2"])
-            mock_run.assert_called_once_with(
-                ["pkexec", "pacman", "-Rns", "--noconfirm", "pkg1", "pkg2"],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
+            args, kwargs = mock_run.call_args
+            assert args[0] == ["pkexec", "pacman", "-Rns", "--noconfirm", "pkg1", "pkg2"]
+            assert kwargs["check"] is True
+            assert kwargs["capture_output"] is True
+            assert kwargs["text"] is True
+            assert "env" in kwargs
+            assert kwargs["env"]["LANG"] == "C"
 
     def test_runs_subprocess_with_force(self):
         with patch("unused_pkg_remover.services.subprocess.run") as mock_run:
             remove_packages_batch(["pkg1"], force=True)
-            mock_run.assert_called_once_with(
-                ["pkexec", "pacman", "-Rns", "--nodeps", "--noconfirm", "pkg1"],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
+            args, kwargs = mock_run.call_args
+            assert args[0] == ["pkexec", "pacman", "-Rns", "--nodeps", "--noconfirm", "pkg1"]
+            assert kwargs["check"] is True
+            assert kwargs["capture_output"] is True
+            assert kwargs["text"] is True
+            assert "env" in kwargs
+            assert kwargs["env"]["LANG"] == "C"
 
     def test_propagates_subprocess_error(self):
         with patch("unused_pkg_remover.services.subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.CalledProcessError(1, ["pacman"], stderr="fail")
             with pytest.raises(RemovalError, match="fail"):
                 remove_packages_batch(["pkg1"])
-
-
-class TestRemovePackages:
-    def test_single_batch(self):
-        with patch("unused_pkg_remover.services.remove_packages_batch") as mock_batch:
-            msgs = list(remove_packages(["pkg1", "pkg2"], batch_size=50, force=False))
-            assert msgs == ["Removing packages..."]
-            mock_batch.assert_called_once_with(["pkg1", "pkg2"], False)
-
-    def test_multiple_batches(self):
-        with patch("unused_pkg_remover.services.remove_packages_batch") as mock_batch:
-            names = [f"pkg{i}" for i in range(5)]
-            msgs = list(remove_packages(names, batch_size=2, force=True))
-            assert msgs == [
-                "Removing batch 1 of 3...",
-                "Removing batch 2 of 3...",
-                "Removing batch 3 of 3...",
-            ]
-            assert mock_batch.call_count == 3
-            mock_batch.assert_any_call(["pkg0", "pkg1"], True)
-            mock_batch.assert_any_call(["pkg2", "pkg3"], True)
-            mock_batch.assert_any_call(["pkg4"], True)
-
-    def test_empty_names_no_calls(self):
-        with patch("unused_pkg_remover.services.remove_packages_batch") as mock_batch:
-            msgs = list(remove_packages([], batch_size=50))
-            assert msgs == []
-            mock_batch.assert_not_called()
-
-    def test_passes_force_flag(self):
-        with patch("unused_pkg_remover.services.remove_packages_batch") as mock_batch:
-            list(remove_packages(["pkg1"], force=True))
-            mock_batch.assert_called_once_with(["pkg1"], True)
 
 
 class TestLogRemoval:
@@ -93,18 +61,12 @@ class TestLogRemoval:
             mock_dir.mkdir = MagicMock()
             m = mock_open()
             with patch("builtins.open", m):
-                from datetime import datetime
-
-                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 log_removal(packages)
                 mock_dir.mkdir.assert_called_once_with(parents=True, exist_ok=True)
                 handle = m()
-                expected_calls = [
-                    f"{ts} | REMOVED | orphan1 | 1000B\n",
-                    f"{ts} | REMOVED | orphan2 | 50000000B\n",
-                ]
-                for expected in expected_calls:
-                    handle.write.assert_any_call(expected)
+                calls = [c[0][0] for c in handle.write.call_args_list]
+                assert any("orphan1 | 1000.0 B" in c for c in calls)
+                assert any("orphan2 | 47.7 MB" in c for c in calls)
 
 
 class TestAddToIgnore:
