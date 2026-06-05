@@ -1,7 +1,7 @@
 # unused-pkg-remover
 
 <p align="center">
-  <img src="assets/unused-pkg-remover.png" alt="unused-pkg-remover icon" width="128">
+  <img src="assets/unused-pkg-remover.png">
 </p>
 
 A PySide6 GUI tool to find and remove unused space on Arch Linux — orphan
