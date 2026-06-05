@@ -654,14 +654,14 @@ class OrphanCleaner(QMainWindow):
                     checked_data += 1
         sel_item = self.table.item(0, COL_SELECT)
         if sel_item is not None:
-            sel_item.blockSignals(True)
+            self.table.blockSignals(True)
             if visible_data == 0 or checked_data == 0:
                 sel_item.setCheckState(Qt.Unchecked)
             elif checked_data == visible_data:
                 sel_item.setCheckState(Qt.Checked)
             else:
                 sel_item.setCheckState(Qt.PartiallyChecked)
-            sel_item.blockSignals(False)
+            self.table.blockSignals(False)
 
     def _checked_count(self):
         c = 0
