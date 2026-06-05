@@ -67,6 +67,39 @@ from .services import (
     remove_stale_launcher_runners,
 )
 
+_SCAN_FUNCTIONS = {
+    "orphans": get_unused_packages,
+    "cache": lambda: (get_cache_packages(), 0),
+    "all-cache": lambda: (get_all_cache_packages(), 0),
+    "flatpak": lambda: (get_unused_flatpaks(), 0),
+    "broken": lambda: (get_broken_packages(), 0),
+    "aur-dep": lambda: (get_aur_build_deps(), 0),
+    "aur-cache": lambda: (get_aur_cache_packages(), 0),
+    "proton-prefix": lambda: (get_orphaned_proton_prefixes(), 0),
+    "steam-runtime": lambda: (get_obsolete_steam_runtimes(), 0),
+    "launcher-runner": lambda: (get_stale_launcher_runners(), 0),
+}
+
+_REMOVAL_ACTIONS = {
+    "cache": ("Removing cached packages...", lambda w: remove_cache_packages(w.names)),
+    "all-cache": ("Removing cached package files...", lambda w: remove_all_cache_packages(w.names)),
+    "flatpak": ("Removing Flatpak runtimes...", lambda w: remove_flatpak_packages(w.names)),
+    "aur-dep": ("Cleaning AUR build deps...", lambda _: remove_aur_deps()),
+    "aur-cache": ("Removing AUR build sources...", lambda w: remove_aur_cache_packages(w.names)),
+    "proton-prefix": (
+        "Removing Proton prefixes...",
+        lambda w: remove_orphaned_proton_prefixes(w.names),
+    ),
+    "steam-runtime": (
+        "Removing Steam runtimes...",
+        lambda w: remove_obsolete_steam_runtimes(w.names),
+    ),
+    "launcher-runner": (
+        "Removing launcher runners...",
+        lambda w: remove_stale_launcher_runners(w.names),
+    ),
+}
+
 _AVAILABLE_MODES: list[tuple[str, str]] = [
     ("orphans", "Orphans"),
     ("cache", "Pacman Cache"),
@@ -138,46 +171,54 @@ class NumericTableItem(QTableWidgetItem):
 class ScanWorker(QObject):
     finished = Signal(object, int)  # packages list, filtered count
     error = Signal(str)
+    cancelled = Signal()
 
     def __init__(self, scan_mode: str) -> None:
         super().__init__()
         self.scan_mode = scan_mode
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
 
     def run(self) -> None:
         try:
-            if self.scan_mode == "orphans":
-                packages, filtered = get_unused_packages()
-            elif self.scan_mode == "cache":
-                packages = get_cache_packages()
-                filtered = 0
-            elif self.scan_mode == "all-cache":
-                packages = get_all_cache_packages()
-                filtered = 0
-            elif self.scan_mode == "flatpak":
-                packages = get_unused_flatpaks()
-                filtered = 0
-            elif self.scan_mode == "broken":
-                packages = get_broken_packages()
-                filtered = 0
-            elif self.scan_mode == "aur-dep":
-                packages = get_aur_build_deps()
-                filtered = 0
-            elif self.scan_mode == "aur-cache":
-                packages = get_aur_cache_packages()
-                filtered = 0
-            elif self.scan_mode == "proton-prefix":
-                packages = get_orphaned_proton_prefixes()
-                filtered = 0
-            elif self.scan_mode == "steam-runtime":
-                packages = get_obsolete_steam_runtimes()
-                filtered = 0
-            elif self.scan_mode == "launcher-runner":
-                packages = get_stale_launcher_runners()
-                filtered = 0
-            else:
-                packages = []
-                filtered = 0
+            if self._cancelled:
+                self.cancelled.emit()
+                return
+            func = _SCAN_FUNCTIONS.get(self.scan_mode)
+            packages, filtered = func() if func else ([], 0)
+            if self._cancelled:
+                self.cancelled.emit()
+                return
             self.finished.emit(packages, filtered)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class DependentsWorker(QObject):
+    finished = Signal(dict)  # dict of pkg -> deps
+    error = Signal(str)
+
+    def __init__(self, names: list[str]) -> None:
+        super().__init__()
+        self.names = names
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:
+        try:
+            dependents = {}
+            for name in self.names:
+                if self._cancelled:
+                    break
+                deps = get_dependents(name)
+                if deps:
+                    dependents[name] = deps
+            if not self._cancelled:
+                self.finished.emit(dependents)
         except Exception as e:
             self.error.emit(str(e))
 
@@ -198,30 +239,10 @@ class RemovalWorker(QObject):
 
     def run(self) -> None:
         try:
-            if self.mode == "cache":
-                self.progress.emit("Removing cached packages...")
-                remove_cache_packages(self.names)
-            elif self.mode == "all-cache":
-                self.progress.emit("Removing cached package files...")
-                remove_all_cache_packages(self.names)
-            elif self.mode == "flatpak":
-                self.progress.emit("Removing Flatpak runtimes...")
-                remove_flatpak_packages(self.names)
-            elif self.mode == "aur-dep":
-                self.progress.emit("Cleaning AUR build deps...")
-                remove_aur_deps()
-            elif self.mode == "aur-cache":
-                self.progress.emit("Removing AUR build sources...")
-                remove_aur_cache_packages(self.names)
-            elif self.mode == "proton-prefix":
-                self.progress.emit("Removing Proton prefixes...")
-                remove_orphaned_proton_prefixes(self.names)
-            elif self.mode == "steam-runtime":
-                self.progress.emit("Removing Steam runtimes...")
-                remove_obsolete_steam_runtimes(self.names)
-            elif self.mode == "launcher-runner":
-                self.progress.emit("Removing launcher runners...")
-                remove_stale_launcher_runners(self.names)
+            if self.mode in _REMOVAL_ACTIONS:
+                msg, action = _REMOVAL_ACTIONS[self.mode]
+                self.progress.emit(msg)
+                action(self)
             else:
                 num_batches = (len(self.names) + self.batch_size - 1) // self.batch_size
                 for i in range(0, len(self.names), self.batch_size):
@@ -230,10 +251,11 @@ class RemovalWorker(QObject):
                         return
                     batch = self.names[i : i + self.batch_size]
                     batch_num = i // self.batch_size + 1
-                    if num_batches > 1:
-                        self.progress.emit(f"Removing batch {batch_num} of {num_batches}...")
-                    else:
-                        self.progress.emit("Removing packages...")
+                    self.progress.emit(
+                        f"Removing batch {batch_num} of {num_batches}..."
+                        if num_batches > 1
+                        else "Removing packages..."
+                    )
                     remove_packages_batch(batch, self.force)
             self.finished.emit(True, "")
         except RemovalError as e:
@@ -253,6 +275,8 @@ class OrphanCleaner(QMainWindow):
         self._removal_worker = None
         self._scan_thread = None
         self._scan_worker = None
+        self._dep_thread = None
+        self._dep_worker = None
         self._removal_running = False
         self._force_attempted = False
         self._loading = False
@@ -435,6 +459,16 @@ class OrphanCleaner(QMainWindow):
         self._save_settings()
         event.accept()
 
+    def _fade_table(self, start: float, end: float, callback):
+        effect = QGraphicsOpacityEffect(self.table)
+        self.table.setGraphicsEffect(effect)
+        self._fade_anim = QPropertyAnimation(effect, b"opacity")
+        self._fade_anim.setDuration(120)
+        self._fade_anim.setStartValue(start)
+        self._fade_anim.setEndValue(end)
+        self._fade_anim.finished.connect(callback)
+        self._fade_anim.start()
+
     def _load_packages(self):
         if self._removal_running or self._loading:
             return
@@ -446,14 +480,7 @@ class OrphanCleaner(QMainWindow):
         mode_label = self.mode_combo.currentText()
         self.status_bar.showMessage(f"Scanning {mode_label.lower()}...")
         self.table.setEnabled(False)
-        effect = QGraphicsOpacityEffect(self.table)
-        self.table.setGraphicsEffect(effect)
-        self._fade_anim = QPropertyAnimation(effect, b"opacity")
-        self._fade_anim.setDuration(120)
-        self._fade_anim.setStartValue(1.0)
-        self._fade_anim.setEndValue(0.25)
-        self._fade_anim.finished.connect(self._do_load_packages)
-        self._fade_anim.start()
+        self._fade_table(1.0, 0.25, self._do_load_packages)
 
     def _on_mode_changed(self, index: int) -> None:
         self._scan_mode = self._mode_keys[index]
@@ -463,16 +490,44 @@ class OrphanCleaner(QMainWindow):
     def _do_load_packages(self):
         if self._scan_thread is not None:
             return
+
+        slow_modes = {"broken", "flatpak", "all-cache", "aur-cache"}
+        show_progress = self._scan_mode in slow_modes
+
+        if show_progress:
+            self._scan_progress = QProgressDialog(
+                f"Scanning {self.mode_combo.currentText().lower()}...", "Cancel", 0, 0, self
+            )
+            self._scan_progress.setWindowTitle("Scanning")
+            self._scan_progress.setMinimumDuration(0)
+            self._scan_progress.setWindowModality(Qt.WindowModal)
+            self._scan_progress.canceled.connect(self._cancel_scan)
+            self._scan_progress.setStyleSheet(_PROGRESS_STYLE)
+            self._scan_progress.show()
+
         self._scan_thread = QThread()
         self._scan_worker = ScanWorker(self._scan_mode)
         self._scan_worker.moveToThread(self._scan_thread)
         self._scan_thread.started.connect(self._scan_worker.run)
         self._scan_worker.finished.connect(self._on_scan_finished)
         self._scan_worker.error.connect(self._on_scan_error)
+        self._scan_worker.cancelled.connect(self._on_scan_cancelled)
         self._scan_thread.start()
+
+    def _cancel_scan(self) -> None:
+        if self._scan_worker is not None:
+            self._scan_worker.cancel()
+
+    def _on_scan_cancelled(self) -> None:
+        self._cleanup_scan_thread()
+        if hasattr(self, "_scan_progress") and self._scan_progress:
+            self._scan_progress.close()
+        self.status_bar.showMessage("Scan cancelled.")
 
     def _on_scan_finished(self, packages: list[dict], filtered: int) -> None:
         self._cleanup_scan_thread()
+        if hasattr(self, "_scan_progress") and self._scan_progress:
+            self._scan_progress.close()
         self.packages = packages
 
         row_count = len(self.packages) + 1  # +1 for select-all row
@@ -539,15 +594,7 @@ class OrphanCleaner(QMainWindow):
             self.table.setItem(row, COL_DESC, desc_item)
 
         self.table.setSortingEnabled(True)
-
-        effect2 = QGraphicsOpacityEffect(self.table)
-        self.table.setGraphicsEffect(effect2)
-        self._fade_anim2 = QPropertyAnimation(effect2, b"opacity")
-        self._fade_anim2.setDuration(120)
-        self._fade_anim2.setStartValue(0.25)
-        self._fade_anim2.setEndValue(1.0)
-        self._fade_anim2.finished.connect(lambda: self._finish_load(filtered))
-        self._fade_anim2.start()
+        self._fade_table(0.25, 1.0, lambda: self._finish_load(filtered))
 
     def _on_scan_error(self, msg: str) -> None:
         self._cleanup_scan_thread()
@@ -556,15 +603,10 @@ class OrphanCleaner(QMainWindow):
         filtered = 0
         self.table.setRowCount(0)
         self.table.setSortingEnabled(True)
-        self._fade_anim2 = QPropertyAnimation(QGraphicsOpacityEffect(self.table), b"opacity")
-        self._fade_anim2.setDuration(1)
-        self._fade_anim2.finished.connect(lambda: self._finish_load(filtered))
-        self._fade_anim2.start()
+        self._fade_table(1.0, 1.0, lambda: self._finish_load(filtered))
 
     def _cleanup_scan_thread(self) -> None:
         if self._scan_worker is not None:
-            self._scan_worker.finished.disconnect()
-            self._scan_worker.error.disconnect()
             self._scan_worker.deleteLater()
         if self._scan_thread is not None:
             self._scan_thread.quit()
@@ -766,44 +808,99 @@ class OrphanCleaner(QMainWindow):
         names = [p["name"] for p in pkgs]
         sel_size = sum(p["size"] for p in pkgs)
 
+        if self._scan_mode != "orphans":
+            self._proceed_with_removal(pkgs, sel_size, {})
+            return
+
+        self._dep_check_pkgs = pkgs
+        self._dep_check_size = sel_size
+        self._dep_check_names = names
+
+        self._dep_progress = QProgressDialog("Checking dependencies...", "Cancel", 0, 0, self)
+        self._dep_progress.setWindowTitle("Dependency Check")
+        self._dep_progress.setMinimumDuration(0)
+        self._dep_progress.setWindowModality(Qt.WindowModal)
+        self._dep_progress.canceled.connect(self._cancel_dependents_check)
+        self._dep_progress.setStyleSheet(_PROGRESS_STYLE)
+        self._dep_progress.show()
+
+        self._dep_thread = QThread()
+        self._dep_worker = DependentsWorker(names)
+        self._dep_worker.moveToThread(self._dep_thread)
+        self._dep_thread.started.connect(self._dep_worker.run)
+        self._dep_worker.finished.connect(self._on_dependents_finished)
+        self._dep_worker.error.connect(self._on_dependents_error)
+        self._dep_thread.start()
+
+    def _cancel_dependents_check(self) -> None:
+        if self._dep_worker is not None:
+            self._dep_worker.cancel()
+
+    def _on_dependents_error(self, msg: str) -> None:
+        self._cleanup_dependents_thread()
+        QMessageBox.warning(self, "Dependency Check Failed", msg)
+        self._proceed_with_removal(self._dep_check_pkgs, self._dep_check_size, {})
+
+    def _on_dependents_finished(self, dependents: dict) -> None:
+        self._cleanup_dependents_thread()
         dep_warning = ""
-        if self._scan_mode == "orphans":
-            dependents = self._check_dependents(names)
-            if dependents:
-                dep_lines = []
-                for pkg, deps in dependents.items():
-                    dep_lines.append(f"{pkg} \u2190 {', '.join(deps)}")
-                dep_warning = "\n".join(dep_lines)
+        if dependents:
+            dep_lines = []
+            for pkg, deps in dependents.items():
+                dep_lines.append(f"{pkg} \u2190 {', '.join(deps)}")
+            dep_warning = "\n".join(dep_lines)
 
-        if self.dry_run and self._scan_mode == "orphans":
-            self._show_removal_details(pkgs, sel_size, dep_warning, dry_run=True)
+        if self.dry_run:
+            self._show_removal_details(
+                self._dep_check_pkgs, self._dep_check_size, dep_warning, dry_run=True
+            )
             return
 
-        if not self._show_removal_details(pkgs, sel_size, dep_warning):
-            return
+        self._proceed_with_removal(self._dep_check_pkgs, self._dep_check_size, dep_warning)
 
-        progress = QProgressDialog("Removing packages...", "Cancel", 0, 0, self)
+    def _cleanup_dependents_thread(self) -> None:
+        if self._dep_worker is not None:
+            self._dep_worker.deleteLater()
+        if self._dep_thread is not None:
+            self._dep_thread.quit()
+            self._dep_thread.wait(5000)
+            self._dep_thread.deleteLater()
+        self._dep_thread = None
+        self._dep_worker = None
+        if self._dep_progress:
+            self._dep_progress.close()
+
+    def _start_removal_thread(
+        self, names: list[str], label: str, force: bool | None = None
+    ) -> None:
+        progress = QProgressDialog(label, "Cancel", 0, 0, self)
         progress.setWindowTitle("Uninstalling")
         progress.setMinimumDuration(0)
         progress.setWindowModality(Qt.WindowModal)
         progress.canceled.connect(self._cancel_removal)
         progress.setStyleSheet(_PROGRESS_STYLE)
         progress.show()
-
         self.setEnabled(False)
-        self._removal_pkgs = pkgs
         self._progress = progress
         self._removal_running = True
-
         self._removal_thread = QThread()
         self._removal_worker = RemovalWorker(
-            names, BATCH_SIZE, force=self.force_remove, mode=self._scan_mode
+            names,
+            BATCH_SIZE,
+            force=force if force is not None else self.force_remove,
+            mode=self._scan_mode,
         )
         self._removal_worker.moveToThread(self._removal_thread)
         self._removal_thread.started.connect(self._removal_worker.run)
         self._removal_worker.progress.connect(progress.setLabelText)
         self._removal_worker.finished.connect(self._on_removal_finished)
         self._removal_thread.start()
+
+    def _proceed_with_removal(self, pkgs, sel_size, dep_warning):
+        if not self._show_removal_details(pkgs, sel_size, dep_warning):
+            return
+        self._removal_pkgs = pkgs
+        self._start_removal_thread([p["name"] for p in pkgs], "Removing packages...")
 
     def _on_removal_finished(self, success, error_msg):
         self._progress.close()
@@ -844,14 +941,12 @@ class OrphanCleaner(QMainWindow):
 
     def _cleanup_thread(self):
         if self._removal_worker is not None:
-            self._removal_worker.progress.disconnect()
-            self._removal_worker.finished.disconnect()
             self._removal_worker.deleteLater()
         if self._removal_thread is not None:
             self._removal_thread.quit()
             self._removal_thread.wait(5000)
             self._removal_thread.deleteLater()
-            self._removal_thread = None
+        self._removal_thread = None
         self._removal_worker = None
 
     def _handle_dep_conflict(self, error_msg):
@@ -882,25 +977,9 @@ class OrphanCleaner(QMainWindow):
         msg.exec()
 
         if msg.clickedButton() == force_btn:
-            names = [p["name"] for p in self._removal_pkgs]
-            progress = QProgressDialog("Force removing packages...", "Cancel", 0, 0, self)
-            progress.setWindowTitle("Uninstalling")
-            progress.setMinimumDuration(0)
-            progress.setWindowModality(Qt.WindowModal)
-            progress.canceled.connect(self._cancel_removal)
-            progress.setStyleSheet(_PROGRESS_STYLE)
-            progress.show()
-
-            self.setEnabled(False)
-            self._progress = progress
-
-            self._removal_thread = QThread()
-            self._removal_worker = RemovalWorker(names, BATCH_SIZE, force=True)
-            self._removal_worker.moveToThread(self._removal_thread)
-            self._removal_thread.started.connect(self._removal_worker.run)
-            self._removal_worker.progress.connect(progress.setLabelText)
-            self._removal_worker.finished.connect(self._on_removal_finished)
-            self._removal_thread.start()
+            self._start_removal_thread(
+                [p["name"] for p in self._removal_pkgs], "Force removing packages...", force=True
+            )
         else:
             self._removal_running = False
             self._force_attempted = False
