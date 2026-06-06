@@ -71,6 +71,18 @@ Modes that require unavailable tools are hidden from the dropdown automatically.
 
 ## Installation
 
+### AUR (recommended)
+
+```bash
+yay -S unused-pkg-remover
+# or
+paru -S unused-pkg-remover
+```
+
+*Once published on AUR — the `aur/` directory contains the PKGBUILD if you want to build manually.*
+
+### PyPI / Local
+
 ```bash
 pip install .
 ```
