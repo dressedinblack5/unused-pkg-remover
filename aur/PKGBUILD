@@ -29,18 +29,20 @@ optdepends=(
   'heroic-games-launcher: Stale launcher runner cleaning'
   'bottles: Stale launcher runner cleaning'
 )
-source=("$pkgname-$pkgver.tar.gz::https://github.com/anomalyco/$pkgname/archive/v$pkgver.tar.gz"
+source=("$pkgname-$pkgver.tar.gz::https://github.com/anomalyco/$pkgname/archive/main.tar.gz"
         "unused-pkg-remover.desktop")
 sha256sums=('SKIP'
             'SKIP')
 
+_sourcedir="$srcdir/$pkgname-main"
+
 build() {
-  cd "$srcdir/$pkgname-$pkgver"
+  cd "$_sourcedir"
   python -m build --wheel --no-isolation
 }
 
 package() {
-  cd "$srcdir/$pkgname-$pkgver"
+  cd "$_sourcedir"
   python -m installer --destdir="$pkgdir" dist/*.whl
 
   install -Dm644 assets/unused-pkg-remover.png \
