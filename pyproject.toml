@@ -29,9 +29,9 @@ classifiers = [
 dev = ["ruff", "pre-commit", "pytest>=8.0"]
 
 [project.urls]
-Homepage = "https://github.com/anomalyco/unused-pkg-remover"
-Repository = "https://github.com/anomalyco/unused-pkg-remover"
-"Bug Tracker" = "https://github.com/anomalyco/unused-pkg-remover/issues"
+Homepage = "https://github.com/dressedinblack5/unused-pkg-remover"
+Repository = "https://github.com/dressedinblack5/unused-pkg-remover"
+"Bug Tracker" = "https://github.com/dressedinblack5/unused-pkg-remover/issues"
 
 [project.scripts]
 unused-pkg-remover = "unused_pkg_remover:main"
