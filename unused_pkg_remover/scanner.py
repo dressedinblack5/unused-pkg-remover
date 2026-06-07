@@ -4,6 +4,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from .constants import _CACHE_ARCHES, _CACHE_EXTS
+
 
 def get_ignored_packages() -> set[str]:
     ignored = set()
@@ -230,6 +232,30 @@ def _get_orphan_names() -> list[str]:
     return []
 
 
+def _query_expac(package_names: list[str]) -> list[dict]:
+    cmd = ["expac", "-Q", "%n|%i|%d|%m"] + package_names
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    packages = []
+    for line in result.stdout.splitlines():
+        parts = line.split("|")
+        if len(parts) == 4:
+            name, date, desc, size_str = parts
+            try:
+                size = int(size_str)
+            except ValueError:
+                size = 0
+            packages.append(
+                {
+                    "name": name,
+                    "date": date,
+                    "desc": desc,
+                    "size": size,
+                }
+            )
+    packages.sort(key=lambda x: x["size"], reverse=True)
+    return packages
+
+
 def get_unused_packages() -> tuple[list[dict], int]:
     if not shutil.which("expac"):
         raise RuntimeError("expac not found. Install it: sudo pacman -S expac")
@@ -241,38 +267,16 @@ def get_unused_packages() -> tuple[list[dict], int]:
     ignored = get_ignored_packages() | SAFE_PACKAGES | get_explicitly_installed_packages()
     aur_pkgs = get_aur_packages()
 
-    cmd = ["expac", "-Q", "%n|%i|%d|%m"] + orphans
-    result = subprocess.run(cmd, capture_output=True, text=True)
-
     unused = []
     filtered_count = 0
-    for line in result.stdout.splitlines():
-        parts = line.split("|")
-        if len(parts) == 4:
-            name, date, desc, size_str = parts
-            if name.lower() in ignored:
-                filtered_count += 1
-                continue
-            try:
-                size = int(size_str)
-            except ValueError:
-                size = 0
-            unused.append(
-                {
-                    "name": name,
-                    "date": date,
-                    "desc": desc,
-                    "size": size,
-                    "is_aur": name.lower() in aur_pkgs,
-                }
-            )
+    for pkg in _query_expac(orphans):
+        if pkg["name"].lower() in ignored:
+            filtered_count += 1
+            continue
+        pkg["is_aur"] = pkg["name"].lower() in aur_pkgs
+        unused.append(pkg)
 
-    unused.sort(key=lambda x: x["size"], reverse=True)
     return unused, filtered_count
-
-
-_CACHE_EXTS = (".pkg.tar.zst", ".pkg.tar.xz", ".pkg.tar.gz", ".pkg.tar.bz2")
-_CACHE_ARCHES = ("-x86_64", "-any", "-i686", "-aarch64")
 
 
 def _get_installed_packages() -> dict[str, str]:
@@ -406,7 +410,7 @@ def get_broken_packages() -> list[dict]:
 
     packages = [
         {"name": n, "size": s, "desc": descs[n], "type_tag": "broken"}
-        for n, s in zip(names, sizes, strict=False)
+        for n, s in zip(names, sizes, strict=True)
     ]
     return packages
 
@@ -419,25 +423,18 @@ def get_aur_build_deps() -> list[dict]:
     if not aur_pkgs:
         return []
 
-    cmd = ["expac", "-Q", "%n|%i|%d|%m"] + orphans
-    result = subprocess.run(cmd, capture_output=True, text=True)
-
     packages = []
-    for line in result.stdout.splitlines():
-        parts = line.split("|")
-        if len(parts) == 4:
-            name, date, desc, size_str = parts
-            if name.lower() in aur_pkgs:
-                packages.append(
-                    {
-                        "name": name,
-                        "size": int(size_str) if size_str.isdigit() else 0,
-                        "desc": "Unused AUR build dependency",
-                        "type_tag": "aur-dep",
-                    }
-                )
+    for pkg in _query_expac(orphans):
+        if pkg["name"].lower() in aur_pkgs:
+            packages.append(
+                {
+                    "name": pkg["name"],
+                    "size": pkg["size"],
+                    "desc": "Unused AUR build dependency",
+                    "type_tag": "aur-dep",
+                }
+            )
 
-    packages.sort(key=lambda x: x["size"], reverse=True)
     return packages
 
 

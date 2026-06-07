@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .constants import format_size
 from .scanner import (
     get_all_cache_packages,
     get_aur_build_deps,
@@ -139,14 +140,6 @@ _PROGRESS_STYLE = """
         border-radius: 3px;
     }
 """
-
-
-def format_size(size_bytes: int) -> str:
-    for unit in ["B", "KB", "MB", "GB", "TB"]:
-        if size_bytes < 1024:
-            return f"{size_bytes:.1f}{unit}"
-        size_bytes /= 1024
-    return f"{size_bytes:.1f}PB"
 
 
 def size_color(size: int) -> QColor:
@@ -1000,6 +993,18 @@ class OrphanCleaner(QMainWindow):
             return
 
         names = [p["name"] for p in pkgs]
+        reply = QMessageBox.question(
+            self,
+            "Add to Ignore",
+            f"Add {len(names)} package(s) to {IGNORE_FILE}?\n\n"
+            + "\n".join(f"  \u2022 {n}" for n in names[:20])
+            + ("\n  ..." if len(names) > 20 else ""),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
         add_to_ignore(IGNORE_FILE, names)
 
         self._load_packages()

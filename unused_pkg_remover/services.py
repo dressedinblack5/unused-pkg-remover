@@ -4,12 +4,12 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from .constants import _CACHE_EXTS, format_size
+
 
 class RemovalError(Exception):
     """Raised when package removal via pacman fails."""
 
-
-_CACHE_EXTS = (".pkg.tar.zst", ".pkg.tar.xz", ".pkg.tar.gz", ".pkg.tar.bz2")
 
 _data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
 HISTORY_DIR = _data_home / "unused-pkg-remover"
@@ -31,14 +31,6 @@ def remove_packages_batch(names: list[str], force: bool = False) -> None:
         raise RemovalError(e.stderr or str(e)) from e
 
 
-def _format_size(size_bytes: int) -> str:
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if size_bytes < 1024.0:
-            return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024.0
-    return f"{size_bytes:.1f} PB"
-
-
 def log_removal(packages: list[dict]) -> None:
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
     with open(HISTORY_FILE, "a") as f:
@@ -46,7 +38,7 @@ def log_removal(packages: list[dict]) -> None:
 
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         for pkg in packages:
-            size_str = _format_size(pkg["size"])
+            size_str = format_size(pkg["size"])
             f.write(f"{ts} | REMOVED | {pkg['name']} | {size_str}\n")
 
 

@@ -6,6 +6,7 @@ import pytest
 from unused_pkg_remover.scanner import (
     SAFE_PACKAGES,
     _get_orphan_names,
+    _query_expac,
     get_all_cache_packages,
     get_aur_build_deps,
     get_aur_cache_packages,
@@ -179,6 +180,60 @@ class TestGetOrphanNames:
             with patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_pacman):
                 result = _get_orphan_names()
                 assert result == ["orphan"]
+
+
+class TestQueryExpac:
+    def test_parses_expac_output(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = (
+            "pkg-a|2024-01-01|First package|50000\npkg-b|2024-01-02|Second package|100000\n"
+        )
+        with patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_result):
+            result = _query_expac(["pkg-a", "pkg-b"])
+            assert len(result) == 2
+            assert result[0]["name"] == "pkg-b"
+            assert result[0]["size"] == 100000
+            assert result[0]["date"] == "2024-01-02"
+            assert result[0]["desc"] == "Second package"
+            assert result[1]["name"] == "pkg-a"
+            assert result[1]["size"] == 50000
+
+    def test_skips_malformed_lines(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "good-pkg|2024-01-01|Good|1000\nbad|line\n"
+        with patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_result):
+            result = _query_expac(["good-pkg", "bad"])
+            assert len(result) == 1
+            assert result[0]["name"] == "good-pkg"
+
+    def test_handles_bad_size_string(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "pkg|2024-01-01|Desc|not_a_number\n"
+        with patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_result):
+            result = _query_expac(["pkg"])
+            assert len(result) == 1
+            assert result[0]["size"] == 0
+
+    def test_returns_empty_on_expac_failure(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+        with patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_result):
+            result = _query_expac(["pkg"])
+            assert result == []
+
+    def test_sorts_by_size_descending(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = (
+            "small|2024-01-01|Small|10\nbig|2024-01-02|Big|1000\nmedium|2024-01-03|Medium|100\n"
+        )
+        with patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_result):
+            result = _query_expac(["small", "big", "medium"])
+            assert [p["name"] for p in result] == ["big", "medium", "small"]
 
 
 class TestGetDependents:
