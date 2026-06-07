@@ -1,32 +1,33 @@
 from PySide6.QtCore import Qt
 
-from unused_pkg_remover.gui import NumericTableItem, format_size, size_color
+from unused_pkg_remover.constants import format_size
+from unused_pkg_remover.gui import NumericTableItem, size_color
 
 
 class TestFormatSize:
     def test_bytes(self):
-        assert format_size(0) == "0.0B"
-        assert format_size(500) == "500.0B"
-        assert format_size(1023) == "1023.0B"
+        assert format_size(0) == "0.0 B"
+        assert format_size(500) == "500.0 B"
+        assert format_size(1023) == "1023.0 B"
 
     def test_kilobytes(self):
-        assert format_size(1024) == "1.0KB"
-        assert format_size(1536) == "1.5KB"
-        assert format_size(1048575) == "1024.0KB"
+        assert format_size(1024) == "1.0 KB"
+        assert format_size(1536) == "1.5 KB"
+        assert format_size(1048575) == "1024.0 KB"
 
     def test_megabytes(self):
-        assert format_size(1048576) == "1.0MB"
-        assert format_size(52428800) == "50.0MB"
+        assert format_size(1048576) == "1.0 MB"
+        assert format_size(52428800) == "50.0 MB"
 
     def test_gigabytes(self):
-        assert format_size(1073741824) == "1.0GB"
-        assert format_size(2147483648) == "2.0GB"
+        assert format_size(1073741824) == "1.0 GB"
+        assert format_size(2147483648) == "2.0 GB"
 
     def test_terabytes(self):
-        assert format_size(1099511627776) == "1.0TB"
+        assert format_size(1099511627776) == "1.0 TB"
 
     def test_petabytes(self):
-        assert format_size(1125899906842624) == "1.0PB"
+        assert format_size(1125899906842624) == "1.0 PB"
 
 
 class TestSizeColor:
