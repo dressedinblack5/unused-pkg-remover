@@ -50,7 +50,7 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "ARG"]
 quote-style = "double"
 indent-style = "space"
 
-[tool.pytest.ini_options]
+[tool.pytest]
 testpaths = ["tests"]
 pythonpath = ["."]
 
