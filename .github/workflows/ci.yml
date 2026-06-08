@@ -36,24 +36,16 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install ".[dev]" pytest
-      - name: Debug info
-        shell: bash
-        run: |
-          set +e
-          echo "=== Python ===" && python3 --version
-          echo "=== which pytest ===" && which pytest || echo "not found"
-          echo "=== pytest --version ===" && pytest --version || echo "not found"
-          echo "=== pip list pytest ===" && pip list 2>/dev/null | grep -i pytest || echo "not found in pip"
-          echo "=== import unused_pkg_remover ===" && python3 -c "import unused_pkg_remover; print('OK')" 2>&1 || echo "import failed"
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
           set +e
-          python -m pytest -v >/tmp/pytest.log 2>&1
+          python -m pytest -v --tb=short >/tmp/pytest.log 2>&1
           RC=$?
           echo "::error::pytest exit code: $RC"
-          head -20 /tmp/pytest.log | while IFS= read -r line; do
+          echo "=== LAST 40 LINES (test failures) ==="
+          tail -40 /tmp/pytest.log | while IFS= read -r line; do
             echo "::error::$line"
           done
           exit $RC
