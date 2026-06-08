@@ -153,7 +153,10 @@ class TestRemoveFlatpakPackages:
 
 class TestRemoveAurDeps:
     def test_runs_yay_with_noconfirm(self):
-        with patch("unused_pkg_remover.services.subprocess.run") as mock_run:
+        with (
+            patch("unused_pkg_remover.services.subprocess.run") as mock_run,
+            patch("unused_pkg_remover.services.shutil.which", return_value="/usr/bin/yay"),
+        ):
             remove_aur_deps()
             mock_run.assert_called_once_with(
                 ["yay", "-Yc", "--noconfirm"],
@@ -163,7 +166,10 @@ class TestRemoveAurDeps:
             )
 
     def test_propagates_error(self):
-        with patch("unused_pkg_remover.services.subprocess.run") as mock_run:
+        with (
+            patch("unused_pkg_remover.services.subprocess.run") as mock_run,
+            patch("unused_pkg_remover.services.shutil.which", return_value="/usr/bin/yay"),
+        ):
             mock_run.side_effect = subprocess.CalledProcessError(1, ["yay"], stderr="yay error")
             with pytest.raises(RemovalError, match="yay error"):
                 remove_aur_deps()
