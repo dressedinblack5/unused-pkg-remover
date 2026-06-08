@@ -2,6 +2,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from .constants import _CACHE_EXTS, format_size
@@ -17,18 +18,47 @@ HISTORY_FILE = HISTORY_DIR / "history.log"
 BATCH_SIZE = 50
 
 
-def remove_packages_batch(names: list[str], force: bool = False) -> None:
+def _run_pkexec(
+    cmd: list[str],
+    *,
+    cancel_check: callable | None = None,
+    timeout: float = 120,
+) -> str:
+    """Run a pkexec command with polling for cancellation and timeout.
+
+    Returns stdout on success. Raises RemovalError on failure.
+    """
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env={**os.environ, "LANG": "C"},
+    )
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if cancel_check and cancel_check():
+            proc.kill()
+            proc.wait()
+            raise RemovalError("Cancelled") from None
+        try:
+            stdout, stderr = proc.communicate(timeout=0.5)
+        except subprocess.TimeoutExpired:
+            continue
+        if proc.returncode != 0:
+            raise RemovalError(stderr or str(proc.returncode)) from None
+        return stdout
+
+    proc.kill()
+    proc.wait()
+    raise RemovalError("Authentication timed out or no polkit agent available") from None
+
+
+def remove_packages_batch(
+    names: list[str], force: bool = False, cancel_check: callable | None = None
+) -> None:
     base = ["pkexec", "pacman", "-Rns", "--nodeps"] if force else ["pkexec", "pacman", "-Rns"]
-    try:
-        subprocess.run(
-            base + ["--noconfirm"] + names,
-            check=True,
-            capture_output=True,
-            text=True,
-            env={**os.environ, "LANG": "C"},
-        )
-    except subprocess.CalledProcessError as e:
-        raise RemovalError(e.stderr or str(e)) from e
+    _run_pkexec(base + ["--noconfirm"] + names, cancel_check=cancel_check)
 
 
 def log_removal(packages: list[dict]) -> None:
@@ -48,7 +78,7 @@ def add_to_ignore(ignore_file_path: Path, package_names: list[str]) -> None:
             f.write(f"{name}\n")
 
 
-def remove_cache_packages(names: list[str]) -> None:
+def remove_cache_packages(names: list[str], cancel_check: callable | None = None) -> None:
     cache_dir = Path("/var/cache/pacman/pkg")
     files = []
     for name in names:
@@ -58,15 +88,7 @@ def remove_cache_packages(names: list[str]) -> None:
                 files.append(str(f))
     if not files:
         return
-    try:
-        subprocess.run(
-            ["pkexec", "rm", "-f"] + files,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError as e:
-        raise RemovalError(e.stderr or str(e)) from e
+    _run_pkexec(["pkexec", "rm", "-f"] + files, cancel_check=cancel_check)
 
 
 def remove_flatpak_packages(names: list[str]) -> None:
@@ -94,7 +116,7 @@ def remove_aur_deps() -> None:
         raise RemovalError(e.stderr or str(e)) from e
 
 
-def remove_all_cache_packages(keys: list[str]) -> None:
+def remove_all_cache_packages(keys: list[str], cancel_check: callable | None = None) -> None:
     """Remove specific cache files by their filename stems (extension excluded)."""
     cache_dir = Path("/var/cache/pacman/pkg")
     files = []
@@ -106,15 +128,7 @@ def remove_all_cache_packages(keys: list[str]) -> None:
                 break
     if not files:
         return
-    try:
-        subprocess.run(
-            ["pkexec", "rm", "-f"] + files,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError as e:
-        raise RemovalError(e.stderr or str(e)) from e
+    _run_pkexec(["pkexec", "rm", "-f"] + files, cancel_check=cancel_check)
 
 
 def remove_aur_cache_packages(names: list[str]) -> None:
@@ -166,21 +180,30 @@ def remove_stale_launcher_runners(names: list[str]) -> None:
     heroic_wine = Path.home() / ".config" / "heroic" / "tools" / "runners" / "wine"
     heroic_proton = Path.home() / ".config" / "heroic" / "tools" / "runners" / "proton"
     bottles_root = Path.home() / ".local" / "share" / "bottles" / "runners"
+    prefix_roots: dict[str, Path] = {
+        "lutris:": lutris_root,
+        "heroic:wine/": heroic_wine,
+        "heroic:proton/": heroic_proton,
+        "bottles:": bottles_root,
+    }
     errors = []
     for name in names:
-        if name.startswith("lutris:"):
-            target = lutris_root / name[7:]
-        elif name.startswith("heroic:wine/"):
-            target = heroic_wine / name[12:]
-        elif name.startswith("heroic:proton/"):
-            target = heroic_proton / name[14:]
-        elif name.startswith("bottles:"):
-            target = bottles_root / name[8:]
-        else:
+        matched = None
+        for prefix, root in prefix_roots.items():
+            if name.startswith(prefix):
+                target = root / name[len(prefix) :]
+                matched = prefix
+                break
+        if matched is None:
             continue
+        prefix_root = str(prefix_roots[matched].resolve())
         if target.exists():
+            resolved = target.resolve()
+            if not str(resolved).startswith(prefix_root):
+                errors.append(f"Path traversal blocked: {target}")
+                continue
             try:
-                shutil.rmtree(target)
+                shutil.rmtree(resolved)
             except OSError as e:
                 errors.append(str(e))
     if errors:

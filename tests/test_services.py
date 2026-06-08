@@ -22,31 +22,28 @@ from unused_pkg_remover.services import (
 
 
 class TestRemovePackagesBatch:
+    def _mock_proc(self, returncode=0, stdout="", stderr=""):
+        proc = MagicMock()
+        proc.returncode = returncode
+        proc.communicate.return_value = (stdout, stderr)
+        return patch("unused_pkg_remover.services.subprocess.Popen", return_value=proc)
+
     def test_runs_subprocess_without_force(self):
-        with patch("unused_pkg_remover.services.subprocess.run") as mock_run:
+        with self._mock_proc() as mock_popen:
             remove_packages_batch(["pkg1", "pkg2"])
-            args, kwargs = mock_run.call_args
+            args, kwargs = mock_popen.call_args
             assert args[0] == ["pkexec", "pacman", "-Rns", "--noconfirm", "pkg1", "pkg2"]
-            assert kwargs["check"] is True
-            assert kwargs["capture_output"] is True
-            assert kwargs["text"] is True
-            assert "env" in kwargs
             assert kwargs["env"]["LANG"] == "C"
 
     def test_runs_subprocess_with_force(self):
-        with patch("unused_pkg_remover.services.subprocess.run") as mock_run:
+        with self._mock_proc() as mock_popen:
             remove_packages_batch(["pkg1"], force=True)
-            args, kwargs = mock_run.call_args
+            args, kwargs = mock_popen.call_args
             assert args[0] == ["pkexec", "pacman", "-Rns", "--nodeps", "--noconfirm", "pkg1"]
-            assert kwargs["check"] is True
-            assert kwargs["capture_output"] is True
-            assert kwargs["text"] is True
-            assert "env" in kwargs
             assert kwargs["env"]["LANG"] == "C"
 
     def test_propagates_subprocess_error(self):
-        with patch("unused_pkg_remover.services.subprocess.run") as mock_run:
-            mock_run.side_effect = subprocess.CalledProcessError(1, ["pacman"], stderr="fail")
+        with self._mock_proc(returncode=1, stderr="fail"):
             with pytest.raises(RemovalError, match="fail"):
                 remove_packages_batch(["pkg1"])
 
@@ -86,6 +83,12 @@ class TestAddToIgnore:
 
 
 class TestRemoveCachePackages:
+    def _mock_proc(self, returncode=0, stdout="", stderr=""):
+        proc = MagicMock()
+        proc.returncode = returncode
+        proc.communicate.return_value = (stdout, stderr)
+        return patch("unused_pkg_remover.services.subprocess.Popen", return_value=proc)
+
     def test_runs_pkexec_rm_with_matching_files(self):
         f1 = MagicMock()
         f1.__str__.return_value = "/var/cache/pacman/pkg/old-pkg-1.0-1-x86_64.pkg.tar.zst"
@@ -96,28 +99,24 @@ class TestRemoveCachePackages:
 
         with (
             patch("unused_pkg_remover.services.Path.iterdir", return_value=[f1, f2]),
-            patch("unused_pkg_remover.services.subprocess.run") as mock_run,
+            self._mock_proc() as mock_popen,
         ):
             remove_cache_packages(["old-pkg"])
-            mock_run.assert_called_once_with(
-                [
-                    "pkexec",
-                    "rm",
-                    "-f",
-                    "/var/cache/pacman/pkg/old-pkg-1.0-1-x86_64.pkg.tar.zst",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
+            args = mock_popen.call_args[0][0]
+            assert args == [
+                "pkexec",
+                "rm",
+                "-f",
+                "/var/cache/pacman/pkg/old-pkg-1.0-1-x86_64.pkg.tar.zst",
+            ]
 
     def test_skips_when_no_matching_files(self):
         with (
             patch("unused_pkg_remover.services.Path.iterdir", return_value=[]),
-            patch("unused_pkg_remover.services.subprocess.run") as mock_run,
+            self._mock_proc() as mock_popen,
         ):
             remove_cache_packages(["old-pkg"])
-            mock_run.assert_not_called()
+            mock_popen.assert_not_called()
 
     def test_propagates_error(self):
         f1 = MagicMock()
@@ -126,11 +125,8 @@ class TestRemoveCachePackages:
 
         with (
             patch("unused_pkg_remover.services.Path.iterdir", return_value=[f1]),
-            patch("unused_pkg_remover.services.subprocess.run") as mock_run,
+            self._mock_proc(returncode=1, stderr="pkexec error"),
         ):
-            mock_run.side_effect = subprocess.CalledProcessError(
-                1, ["pkexec"], stderr="pkexec error"
-            )
             with pytest.raises(RemovalError, match="pkexec error"):
                 remove_cache_packages(["old-pkg"])
 
@@ -174,6 +170,12 @@ class TestRemoveAurDeps:
 
 
 class TestRemoveAllCachePackages:
+    def _mock_proc(self, returncode=0, stdout="", stderr=""):
+        proc = MagicMock()
+        proc.returncode = returncode
+        proc.communicate.return_value = (stdout, stderr)
+        return patch("unused_pkg_remover.services.subprocess.Popen", return_value=proc)
+
     def test_removes_specific_files_by_key(self):
         mock_f = MagicMock()
         mock_f.exists.return_value = True
@@ -181,11 +183,10 @@ class TestRemoveAllCachePackages:
 
         with (
             patch("unused_pkg_remover.services.Path.__truediv__", return_value=mock_f),
-            patch("unused_pkg_remover.services.subprocess.run") as mock_run,
+            self._mock_proc() as mock_popen,
         ):
             remove_all_cache_packages(["firefox-134.0-1-x86_64"])
-            mock_run.assert_called_once()
-            args = mock_run.call_args[0][0]
+            args = mock_popen.call_args[0][0]
             assert "pkexec" in args
             assert "rm" in args
             assert "-f" in args
@@ -197,10 +198,10 @@ class TestRemoveAllCachePackages:
 
         with (
             patch("unused_pkg_remover.services.Path.__truediv__", return_value=mock_f),
-            patch("unused_pkg_remover.services.subprocess.run") as mock_run,
+            self._mock_proc() as mock_popen,
         ):
             remove_all_cache_packages(["no-such-pkg"])
-            mock_run.assert_not_called()
+            mock_popen.assert_not_called()
 
 
 class TestRemoveAurCachePackages:

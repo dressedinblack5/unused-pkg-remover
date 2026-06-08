@@ -1,3 +1,4 @@
+import functools
 import os
 import re
 import shutil
@@ -5,6 +6,12 @@ import subprocess
 from pathlib import Path
 
 from .constants import _CACHE_ARCHES, _CACHE_EXTS
+
+
+def clear_package_caches() -> None:
+    get_aur_packages.cache_clear()
+    get_explicitly_installed_packages.cache_clear()
+    _get_installed_packages.cache_clear()
 
 
 def get_ignored_packages() -> set[str]:
@@ -30,6 +37,7 @@ def get_ignored_packages() -> set[str]:
     return ignored
 
 
+@functools.cache
 def get_aur_packages() -> set[str]:
     result = subprocess.run(["pacman", "-Qqm"], capture_output=True, text=True)
     if result.returncode != 0:
@@ -37,6 +45,7 @@ def get_aur_packages() -> set[str]:
     return {pkg.lower() for pkg in result.stdout.splitlines()}
 
 
+@functools.cache
 def get_explicitly_installed_packages() -> set[str]:
     result = subprocess.run(["pacman", "-Qqe"], capture_output=True, text=True)
     if result.returncode != 0:
@@ -233,7 +242,7 @@ def _get_orphan_names() -> list[str]:
 
 
 def _query_expac(package_names: list[str]) -> list[dict]:
-    cmd = ["expac", "-Q", "%n|%i|%d|%m"] + package_names
+    cmd = ["expac", "-Q", "%n|%l|%d|%m"] + package_names
     result = subprocess.run(cmd, capture_output=True, text=True)
     packages = []
     for line in result.stdout.splitlines():
@@ -241,7 +250,7 @@ def _query_expac(package_names: list[str]) -> list[dict]:
         if len(parts) == 4:
             name, date, desc, size_str = parts
             try:
-                size = int(size_str)
+                size = int(size_str.strip())
             except ValueError:
                 size = 0
             packages.append(
@@ -257,6 +266,7 @@ def _query_expac(package_names: list[str]) -> list[dict]:
 
 
 def get_unused_packages() -> tuple[list[dict], int]:
+    clear_package_caches()
     if not shutil.which("expac"):
         raise RuntimeError("expac not found. Install it: sudo pacman -S expac")
 
@@ -279,6 +289,7 @@ def get_unused_packages() -> tuple[list[dict], int]:
     return unused, filtered_count
 
 
+@functools.cache
 def _get_installed_packages() -> dict[str, str]:
     result = subprocess.run(["pacman", "-Q"], capture_output=True, text=True)
     if result.returncode != 0:
@@ -291,7 +302,27 @@ def _get_installed_packages() -> dict[str, str]:
     return installed
 
 
+def _extract_cache_pkg_name(filename: str) -> str:
+    stem = filename
+    for ext in _CACHE_EXTS:
+        if stem.endswith(ext):
+            stem = stem[: -len(ext)]
+            break
+    for arch in _CACHE_ARCHES:
+        if stem.endswith(arch):
+            stem = stem[: -len(arch)]
+            break
+    for _ in range(2):
+        idx = stem.rfind("-")
+        if idx > 0 and re.fullmatch(r"[\d.:]+", stem[idx + 1 :]):
+            stem = stem[:idx]
+        else:
+            break
+    return stem.lower()
+
+
 def get_cache_packages() -> list[dict]:
+    clear_package_caches()
     cache_dir = Path("/var/cache/pacman/pkg")
     if not cache_dir.exists():
         return []
@@ -300,28 +331,10 @@ def get_cache_packages() -> list[dict]:
 
     by_name: dict[str, list[Path]] = {}
     for f in cache_dir.iterdir():
-        if not f.is_file():
+        if not f.is_file() or not any(f.name.endswith(ext) for ext in _CACHE_EXTS):
             continue
-        stem = f.name
-        for ext in _CACHE_EXTS:
-            if stem.endswith(ext):
-                stem = stem[: -len(ext)]
-                break
-        for arch in _CACHE_ARCHES:
-            if stem.endswith(arch):
-                stem = stem[: -len(arch)]
-                break
-        last_hyphen = stem.rfind("-")
-        if last_hyphen > 0 and stem[last_hyphen + 1 :].isdigit():
-            stem = stem[:last_hyphen]
-        parts = stem.split("-")
-        for i in range(len(parts), 0, -1):
-            candidate = "-".join(parts[:i]).lower()
-            if candidate in installed:
-                by_name.setdefault(candidate, []).append(f)
-                break
-        else:
-            by_name.setdefault(parts[0].lower(), []).append(f)
+        pkg_name = _extract_cache_pkg_name(f.name)
+        by_name.setdefault(pkg_name, []).append(f)
 
     packages = []
     for name_lower, files in by_name.items():
@@ -339,13 +352,33 @@ def get_cache_packages() -> list[dict]:
     return packages
 
 
+_SIZE_UNITS = {"bytes": 1, "kb": 1024, "mb": 1024**2, "gb": 1024**3, "tb": 1024**4}
+
+
+def _parse_size(s: str) -> int:
+    s = s.strip().lower()
+    for unit, mul in _SIZE_UNITS.items():
+        if s.endswith(unit):
+            num = s[: -len(unit)].strip().rstrip(".")
+            try:
+                return int(float(num) * mul)
+            except ValueError:
+                return 0
+    try:
+        return int(s)
+    except ValueError:
+        return 0
+
+
 def get_unused_flatpaks() -> list[dict]:
     if not shutil.which("flatpak"):
         return []
+    env = {**os.environ, "LANG": "C"}
     result = subprocess.run(
         ["flatpak", "uninstall", "--unused", "--noninteractive", "--dry-run"],
         capture_output=True,
         text=True,
+        env=env,
     )
     if result.returncode != 0:
         return []
@@ -357,16 +390,20 @@ def get_unused_flatpaks() -> list[dict]:
 
     sizes = {}
     if names:
-        size_result = subprocess.run(
-            ["flatpak", "info"] + names + ["--show-size"],
-            capture_output=True,
-            text=True,
-        )
-        if size_result.returncode == 0:
-            for line_num, line in enumerate(size_result.stdout.splitlines()):
-                s = line.strip()
-                if s.isdigit() and line_num < len(names):
-                    sizes[names[line_num]] = int(s)
+        for name in names:
+            info = subprocess.run(
+                ["flatpak", "info", name, "--show-size"],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            if info.returncode == 0:
+                for line in info.stdout.splitlines():
+                    ls = line.strip().lower()
+                    if ls.startswith("installed size:"):
+                        val = line.split(":", 1)[-1].strip()
+                        sizes[name] = _parse_size(val)
+                        break
 
     packages = [
         {
@@ -403,10 +440,10 @@ def get_broken_packages() -> list[dict]:
             text=True,
         )
         if size_result.returncode == 0:
-            sizes = [
-                int(s.strip()) if s.strip().isdigit() else 0
-                for s in size_result.stdout.splitlines()
-            ]
+            seen = size_result.stdout.splitlines()
+            for i in range(min(len(seen), len(names))):
+                s = seen[i].strip()
+                sizes[i] = int(s) if s.isdigit() else 0
 
     packages = [
         {"name": n, "size": s, "desc": descs[n], "type_tag": "broken"}
@@ -416,6 +453,7 @@ def get_broken_packages() -> list[dict]:
 
 
 def get_aur_build_deps() -> list[dict]:
+    clear_package_caches()
     orphans = _get_orphan_names()
     if not orphans:
         return []
@@ -440,6 +478,7 @@ def get_aur_build_deps() -> list[dict]:
 
 def get_all_cache_packages() -> list[dict]:
     """Show every cached package file including installed versions."""
+    clear_package_caches()
     cache_dir = Path("/var/cache/pacman/pkg")
     if not cache_dir.exists():
         return []
@@ -457,18 +496,7 @@ def get_all_cache_packages() -> list[dict]:
                 name = name[: -len(ext)]
                 break
 
-        is_installed = False
-        # Guess package name from stem: strip arch + version
-        stem = name.lower()
-        for arch in _CACHE_ARCHES:
-            if stem.endswith(arch):
-                stem = stem[: -len(arch)]
-                break
-        ver_end = stem.rfind("-")
-        if ver_end > 0:
-            stem = stem[:ver_end]
-        if stem in installed:
-            is_installed = True
+        is_installed = _extract_cache_pkg_name(f.name) in installed
 
         size = f.stat().st_size
         packages.append(
