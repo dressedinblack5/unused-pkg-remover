@@ -34,7 +34,7 @@ from .constants import (
     COL_SELECT,
     COL_SIZE,
     COL_TYPE,
-    IGNORE_FILE,
+    get_ignore_file,
 )
 from .theme import NumericTableItem, size_color
 from .workers import DependentsWorker, RemovalWorker, ScanWorker
@@ -59,6 +59,7 @@ class OrphanCleaner(QMainWindow):
         self._scan_mode = "orphans"
         self._load_gen = 0
         self._scan_progress = None
+        self._dep_progress = None
         title = "Unused Package Remover"
         if dry_run:
             title = f"[DRY RUN] {title}"
@@ -240,6 +241,7 @@ class OrphanCleaner(QMainWindow):
             event.ignore()
             return
         self._cleanup_scan_thread()
+        self._cleanup_dependents_thread()
         self._save_settings()
         event.accept()
 
@@ -624,6 +626,9 @@ class OrphanCleaner(QMainWindow):
         sel_size = sum(p["size"] for p in pkgs)
 
         if self._scan_mode != "orphans":
+            if self.dry_run:
+                self._show_removal_details(pkgs, sel_size, "", dry_run=True)
+                return
             self._proceed_with_removal(pkgs, sel_size, {})
             return
 
@@ -817,7 +822,7 @@ class OrphanCleaner(QMainWindow):
         self.status_bar.showMessage(f"Copied '{text}' to clipboard")
 
     def _ignore_single(self, name: str) -> None:
-        add_to_ignore(IGNORE_FILE, [name])
+        add_to_ignore(get_ignore_file(), [name])
         self.status_bar.showMessage(f"Added '{name}' to ignore list")
 
     def _add_to_ignore(self):
@@ -828,10 +833,11 @@ class OrphanCleaner(QMainWindow):
             return
 
         names = [p["name"] for p in pkgs]
+        ignore_file = get_ignore_file()
         reply = QMessageBox.question(
             self,
             "Add to Ignore",
-            f"Add {len(names)} package(s) to {IGNORE_FILE}?\n\n"
+            f"Add {len(names)} package(s) to {ignore_file}?\n\n"
             + "\n".join(f"  \u2022 {n}" for n in names[:20])
             + ("\n  ..." if len(names) > 20 else ""),
             QMessageBox.Yes | QMessageBox.No,
@@ -840,10 +846,10 @@ class OrphanCleaner(QMainWindow):
         if reply != QMessageBox.Yes:
             return
 
-        add_to_ignore(IGNORE_FILE, names)
+        add_to_ignore(ignore_file, names)
 
         self._load_packages()
-        self.status_bar.showMessage(f"Added {len(names)} packages to {IGNORE_FILE}")
+        self.status_bar.showMessage(f"Added {len(names)} packages to {ignore_file}")
 
     def _show_history(self) -> None:
         if not HISTORY_FILE.exists():
