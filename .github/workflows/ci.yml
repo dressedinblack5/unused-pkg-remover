@@ -48,4 +48,12 @@ jobs:
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -v
+        run: |
+          set +e
+          python -m pytest -v >/tmp/pytest.log 2>&1
+          RC=$?
+          echo "::error::pytest exit code: $RC"
+          head -20 /tmp/pytest.log | while IFS= read -r line; do
+            echo "::error::$line"
+          done
+          exit $RC
