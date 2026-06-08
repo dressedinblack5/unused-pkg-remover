@@ -3,6 +3,7 @@ import re
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from .constants import _CACHE_EXTS, format_size
@@ -21,7 +22,7 @@ BATCH_SIZE = 50
 def _run_pkexec(
     cmd: list[str],
     *,
-    cancel_check: callable | None = None,
+    cancel_check: Callable | None = None,
     timeout: float = 120,
 ) -> str:
     """Run a pkexec command with polling for cancellation and timeout.
@@ -55,7 +56,7 @@ def _run_pkexec(
 
 
 def remove_packages_batch(
-    names: list[str], force: bool = False, cancel_check: callable | None = None
+    names: list[str], force: bool = False, cancel_check: Callable | None = None
 ) -> None:
     base = ["pkexec", "pacman", "-Rns", "--nodeps"] if force else ["pkexec", "pacman", "-Rns"]
     _run_pkexec(base + ["--noconfirm"] + names, cancel_check=cancel_check)
@@ -78,7 +79,7 @@ def add_to_ignore(ignore_file_path: Path, package_names: list[str]) -> None:
             f.write(f"{name}\n")
 
 
-def remove_cache_packages(names: list[str], cancel_check: callable | None = None) -> None:
+def remove_cache_packages(names: list[str], cancel_check: Callable | None = None) -> None:
     cache_dir = Path("/var/cache/pacman/pkg")
     files = []
     for name in names:
@@ -116,7 +117,7 @@ def remove_aur_deps() -> None:
         raise RemovalError(e.stderr or str(e)) from e
 
 
-def remove_all_cache_packages(keys: list[str], cancel_check: callable | None = None) -> None:
+def remove_all_cache_packages(keys: list[str], cancel_check: Callable | None = None) -> None:
     """Remove specific cache files by their filename stems (extension excluded)."""
     cache_dir = Path("/var/cache/pacman/pkg")
     files = []
