@@ -44,8 +44,15 @@ jobs:
           python -m pytest -v --tb=short >/tmp/pytest.log 2>&1
           RC=$?
           echo "::error::pytest exit code: $RC"
-          echo "=== LAST 40 LINES (test failures) ==="
-          tail -40 /tmp/pytest.log | while IFS= read -r line; do
-            echo "::error::$line"
-          done
+          if grep -E "FAILED|ERRORS|ERROR:" /tmp/pytest.log >/dev/null 2>&1; then
+            echo "=== FAILED/ERROR TESTS ==="
+            grep -E "FAILED|ERRORS|ERROR:" /tmp/pytest.log | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          else
+            echo "=== LAST 10 LINES ==="
+            tail -10 /tmp/pytest.log | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          fi
           exit $RC
