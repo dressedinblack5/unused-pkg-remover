@@ -36,7 +36,14 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install ".[dev]" pytest
+      - name: Debug info
+        run: |
+          which python && python --version
+          which pytest && pytest --version || echo "no pytest binary"
+          python -c "import pytest; print('pytest:', pytest.__version__)"
+          python -c "import unused_pkg_remover; print('package:', unused_pkg_remover.__file__)"
+          pip list 2>/dev/null | grep -i pytest
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: pytest -v
+        run: python -m pytest -v
