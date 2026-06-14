@@ -176,6 +176,19 @@ def remove_obsolete_steam_runtimes(names: list[str]) -> None:
         raise RemovalError("; ".join(errors))
 
 
+def remove_ollama_models(names: list[str]) -> None:
+    """Remove Ollama models via `ollama rm`."""
+    try:
+        subprocess.run(
+            ["ollama", "rm"] + names,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        raise RemovalError(e.stderr or str(e)) from e
+
+
 def remove_stale_launcher_runners(names: list[str]) -> None:
     lutris_root = Path.home() / ".local" / "share" / "lutris" / "runners"
     heroic_wine = Path.home() / ".config" / "heroic" / "tools" / "runners" / "wine"

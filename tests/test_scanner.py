@@ -17,6 +17,7 @@ from unused_pkg_remover.scanner import (
     get_explicitly_installed_packages,
     get_ignored_packages,
     get_obsolete_steam_runtimes,
+    get_ollama_models,
     get_orphaned_proton_prefixes,
     get_stale_launcher_runners,
     get_unused_flatpaks,
@@ -502,14 +503,27 @@ class TestGetUnusedFlatpaks:
         with patch("unused_pkg_remover.scanner.shutil.which", return_value=None):
             assert get_unused_flatpaks() == []
 
-    def test_returns_empty_on_nonzero_exit(self):
+    def test_raises_on_nonzero_exit(self):
         mock_result = MagicMock()
         mock_result.returncode = 1
+        mock_result.stderr = "flatpak daemon not running"
         with (
             patch("unused_pkg_remover.scanner.shutil.which", return_value="/usr/bin/flatpak"),
             patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_result),
         ):
-            assert get_unused_flatpaks() == []
+            with pytest.raises(RuntimeError, match="flatpak daemon not running"):
+                get_unused_flatpaks()
+
+    def test_raises_with_fallback_on_nonzero_exit_no_stderr(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stderr = ""
+        with (
+            patch("unused_pkg_remover.scanner.shutil.which", return_value="/usr/bin/flatpak"),
+            patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_result),
+        ):
+            with pytest.raises(RuntimeError, match="exited with code"):
+                get_unused_flatpaks()
 
 
 class TestGetBrokenPackages:
@@ -798,6 +812,100 @@ class TestGetObsoleteSteamRuntimes:
         ):
             result = get_obsolete_steam_runtimes()
             assert len(result) == 0
+
+
+class TestGetOllamaModels:
+    def test_returns_empty_if_ollama_not_installed(self):
+        with patch("unused_pkg_remover.scanner.shutil.which", return_value=None):
+            assert get_ollama_models() == []
+
+    def test_raises_on_nonzero_exit(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stderr = "could not connect to ollama server"
+        with (
+            patch("unused_pkg_remover.scanner.shutil.which", return_value="/usr/bin/ollama"),
+            patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_result),
+        ):
+            with pytest.raises(RuntimeError, match="could not connect"):
+                get_ollama_models()
+
+    def test_raises_with_fallback_message_when_stderr_empty(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stderr = ""
+        with (
+            patch("unused_pkg_remover.scanner.shutil.which", return_value="/usr/bin/ollama"),
+            patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_result),
+        ):
+            with pytest.raises(RuntimeError, match="exited with code"):
+                get_ollama_models()
+
+    def test_parses_ollama_list_output(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = (
+            "NAME                ID           SIZE      MODIFIED\n"
+            "llama3.2:1b         0a1b2c3d     1.2 GB    2 days ago\n"
+            "mistral:latest      e4f5g6h7     4.1 GB    3 weeks ago\n"
+        )
+        with (
+            patch("unused_pkg_remover.scanner.shutil.which", return_value="/usr/bin/ollama"),
+            patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_result),
+        ):
+            result = get_ollama_models()
+            assert len(result) == 2
+            assert result[0]["name"] == "mistral:latest"
+            assert result[0]["size"] > result[1]["size"]
+            assert result[0]["type_tag"] == "ollama"
+            assert result[1]["name"] == "llama3.2:1b"
+            assert result[1]["type_tag"] == "ollama"
+
+    def test_parses_size_correctly(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = (
+            "NAME    ID           SIZE      MODIFIED\n"
+            "tiny     abc123      214 MB    1 day ago\n"
+            "huge     def456      4.1 GB    2 days ago\n"
+        )
+        with (
+            patch("unused_pkg_remover.scanner.shutil.which", return_value="/usr/bin/ollama"),
+            patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_result),
+        ):
+            result = get_ollama_models()
+            assert len(result) == 2
+            assert result[1]["size"] == 224395264
+            assert result[0]["size"] == int(4.1 * 1024**3)
+
+    def test_skips_empty_lines(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = (
+            "NAME    ID           SIZE      MODIFIED\n\nmodel   abc123      1.0 GB    2 days ago\n"
+        )
+        with (
+            patch("unused_pkg_remover.scanner.shutil.which", return_value="/usr/bin/ollama"),
+            patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_result),
+        ):
+            result = get_ollama_models()
+            assert len(result) == 1
+
+    def test_handles_malformed_lines(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = (
+            "NAME    ID           SIZE      MODIFIED\n"
+            "short\n"
+            "good    def456      1.0 GB    1 day ago\n"
+        )
+        with (
+            patch("unused_pkg_remover.scanner.shutil.which", return_value="/usr/bin/ollama"),
+            patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_result),
+        ):
+            result = get_ollama_models()
+            assert len(result) == 1
+            assert result[0]["name"] == "good"
 
 
 class TestGetStaleLauncherRunners:

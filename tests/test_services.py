@@ -15,6 +15,7 @@ from unused_pkg_remover.services import (
     remove_cache_packages,
     remove_flatpak_packages,
     remove_obsolete_steam_runtimes,
+    remove_ollama_models,
     remove_orphaned_proton_prefixes,
     remove_packages_batch,
     remove_stale_launcher_runners,
@@ -259,6 +260,26 @@ class TestRemoveObsoleteSteamRuntimes:
     def test_skips_non_existent(self):
         with patch("unused_pkg_remover.services.Path.home", return_value=Path("/tmp/no-steam")):
             remove_obsolete_steam_runtimes(["NoSuchRuntime"])  # should not raise
+
+
+class TestRemoveOllamaModels:
+    def test_runs_ollama_rm(self):
+        with patch("unused_pkg_remover.services.subprocess.run") as mock_run:
+            remove_ollama_models(["llama3.2:1b", "mistral:latest"])
+            mock_run.assert_called_once_with(
+                ["ollama", "rm", "llama3.2:1b", "mistral:latest"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+    def test_propagates_error(self):
+        with patch("unused_pkg_remover.services.subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.CalledProcessError(
+                1, ["ollama"], stderr="ollama error"
+            )
+            with pytest.raises(RemovalError, match="ollama error"):
+                remove_ollama_models(["bad-model"])
 
 
 class TestRemoveStaleLauncherRunners:
