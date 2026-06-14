@@ -22,6 +22,7 @@ makedepends=(
 )
 optdepends=(
   'flatpak: Flatpak runtime cleaning'
+  'ollama: Ollama model listing and removal'
   'yay: AUR cache cleaning and orphan removal'
   'paru: AUR cache cleaning and orphan removal'
   'steam: Steam/Proton cleaning'
