@@ -36,7 +36,7 @@ from .constants import (
     COL_TYPE,
     get_ignore_file,
 )
-from .theme import NumericTableItem, size_color
+from .theme import NumericTableItem, SelectAllHeader, size_color
 from .workers import DependentsWorker, RemovalWorker, ScanWorker
 
 
@@ -162,6 +162,11 @@ class OrphanCleaner(QMainWindow):
         self.table.verticalHeader().setVisible(False)
         self.table.setSortingEnabled(True)
         self.table.setAlternatingRowColors(True)
+
+        self._select_all_header = SelectAllHeader(self.table)
+        self.table.setHorizontalHeader(self._select_all_header)
+        self._select_all_header.checkStateChanged.connect(self._on_header_select_all)
+
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(COL_SELECT, QHeaderView.Fixed)
         self.table.setColumnWidth(COL_SELECT, 40)
@@ -174,8 +179,6 @@ class OrphanCleaner(QMainWindow):
         hdr.setSectionResizeMode(COL_DESC, QHeaderView.Stretch)
         self.table.verticalHeader().setDefaultSectionSize(26)
         layout.addWidget(self.table)
-
-        self._select_all_row = None
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
@@ -316,9 +319,7 @@ class OrphanCleaner(QMainWindow):
             self._scan_progress.close()
         self.packages = packages
 
-        row_count = len(self.packages) + 1
-        self.table.setRowCount(row_count)
-        self._select_all_row = 0
+        self.table.setRowCount(len(self.packages))
 
         type_colors = {
             "AUR": "#ff7b72",
@@ -333,24 +334,8 @@ class OrphanCleaner(QMainWindow):
             "launcher-runner": "#ffab70",
         }
 
-        chk = QTableWidgetItem()
-        chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-        chk.setCheckState(Qt.Unchecked)
-        chk.setData(Qt.UserRole, -1)
-        self.table.setItem(0, COL_SELECT, chk)
-
-        name_item = QTableWidgetItem("Select All")
-        font = name_item.font()
-        font.setBold(True)
-        name_item.setFont(font)
-        self.table.setItem(0, COL_NAME, name_item)
-
-        desc_item = QTableWidgetItem("Check / uncheck all visible packages")
-        desc_item.setToolTip("Check or uncheck all packages in the list")
-        self.table.setItem(0, COL_DESC, desc_item)
-
         for i, pkg in enumerate(self.packages):
-            row = i + 1
+            row = i
             chk = QTableWidgetItem()
             chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             chk.setCheckState(Qt.Unchecked)
@@ -418,16 +403,6 @@ class OrphanCleaner(QMainWindow):
 
     def _on_item_changed(self, item):
         if item.column() == COL_SELECT:
-            role = item.data(Qt.UserRole)
-            if role == -1:
-                checked = item.checkState() == Qt.Checked
-                self.table.blockSignals(True)
-                for row in range(1, self.table.rowCount()):
-                    if not self.table.isRowHidden(row):
-                        chk = self.table.item(row, COL_SELECT)
-                        if chk:
-                            chk.setCheckState(Qt.Checked if checked else Qt.Unchecked)
-                self.table.blockSignals(False)
             self._update_buttons()
 
     def _update_buttons(self):
@@ -458,12 +433,11 @@ class OrphanCleaner(QMainWindow):
         self.status_bar.showMessage(" \u00b7 ".join(parts))
 
     def _filter_packages(self, text):
-        for row in range(1, self.table.rowCount()):
+        for row in range(self.table.rowCount()):
             item = self.table.item(row, COL_NAME)
             if item:
                 visible = text.lower() in item.text().lower() if text else True
                 self.table.setRowHidden(row, not visible)
-        self.table.setRowHidden(0, False)
         visible_count = sum(
             1 for row in range(self.table.rowCount()) if not self.table.isRowHidden(row)
         )
@@ -476,7 +450,7 @@ class OrphanCleaner(QMainWindow):
 
     def _deselect_all(self):
         self.table.blockSignals(True)
-        for row in range(1, self.table.rowCount()):
+        for row in range(self.table.rowCount()):
             item = self.table.item(row, COL_SELECT)
             if item:
                 item.setCheckState(Qt.Unchecked)
@@ -485,11 +459,22 @@ class OrphanCleaner(QMainWindow):
 
     def _select_all_visible(self):
         self.table.blockSignals(True)
-        for row in range(1, self.table.rowCount()):
+        for row in range(self.table.rowCount()):
             if not self.table.isRowHidden(row):
                 item = self.table.item(row, COL_SELECT)
                 if item:
                     item.setCheckState(Qt.Checked)
+        self.table.blockSignals(False)
+        self._update_buttons()
+
+    def _on_header_select_all(self, state: int) -> None:
+        checked = state == Qt.Checked
+        self.table.blockSignals(True)
+        for row in range(self.table.rowCount()):
+            if not self.table.isRowHidden(row):
+                chk = self.table.item(row, COL_SELECT)
+                if chk:
+                    chk.setCheckState(Qt.Checked if checked else Qt.Unchecked)
         self.table.blockSignals(False)
         self._update_buttons()
 
@@ -505,26 +490,22 @@ class OrphanCleaner(QMainWindow):
     def _update_checkbox_state(self):
         visible_data = 0
         checked_data = 0
-        for row in range(1, self.table.rowCount()):
+        for row in range(self.table.rowCount()):
             if not self.table.isRowHidden(row):
                 visible_data += 1
                 item = self.table.item(row, COL_SELECT)
                 if item and item.checkState() == Qt.Checked:
                     checked_data += 1
-        sel_item = self.table.item(0, COL_SELECT)
-        if sel_item is not None:
-            self.table.blockSignals(True)
-            if visible_data == 0 or checked_data == 0:
-                sel_item.setCheckState(Qt.Unchecked)
-            elif checked_data == visible_data:
-                sel_item.setCheckState(Qt.Checked)
-            else:
-                sel_item.setCheckState(Qt.PartiallyChecked)
-            self.table.blockSignals(False)
+        if visible_data == 0 or checked_data == 0:
+            self._select_all_header.setCheckState(Qt.Unchecked)
+        elif checked_data == visible_data:
+            self._select_all_header.setCheckState(Qt.Checked)
+        else:
+            self._select_all_header.setCheckState(Qt.PartiallyChecked)
 
     def _checked_count(self):
         c = 0
-        for row in range(1, self.table.rowCount()):
+        for row in range(self.table.rowCount()):
             item = self.table.item(row, COL_SELECT)
             if item and item.checkState() == Qt.Checked:
                 c += 1
@@ -532,7 +513,7 @@ class OrphanCleaner(QMainWindow):
 
     def _checked_indices(self):
         idxs = []
-        for row in range(1, self.table.rowCount()):
+        for row in range(self.table.rowCount()):
             item = self.table.item(row, COL_SELECT)
             if item and item.checkState() == Qt.Checked:
                 idx = item.data(Qt.UserRole)
@@ -802,8 +783,6 @@ class OrphanCleaner(QMainWindow):
         if item is None:
             return
         row = item.row()
-        if row == 0:
-            return
         pkg_idx = self.table.item(row, COL_SELECT).data(Qt.UserRole)
         pkg = self.packages[pkg_idx]
 

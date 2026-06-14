@@ -1,6 +1,12 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRect, Qt, Signal
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QStyleFactory, QTableWidgetItem
+from PySide6.QtWidgets import (
+    QHeaderView,
+    QStyle,
+    QStyleFactory,
+    QStyleOptionButton,
+    QTableWidgetItem,
+)
 
 
 def size_color(size: int) -> QColor:
@@ -20,6 +26,57 @@ class NumericTableItem(QTableWidgetItem):
         if a is not None and b is not None:
             return a < b
         return False
+
+
+class SelectAllHeader(QHeaderView):
+    """Header with a select-all checkbox in the first section."""
+
+    checkStateChanged = Signal(int)  # Qt.CheckState
+
+    def __init__(self, parent=None):
+        super().__init__(Qt.Horizontal, parent)
+        self._check_state = Qt.Unchecked
+        self.setSectionsClickable(True)
+
+    def setCheckState(self, state: Qt.CheckState) -> None:
+        if self._check_state != state:
+            self._check_state = state
+            self.updateSection(0)
+
+    def checkState(self) -> Qt.CheckState:
+        return self._check_state
+
+    def mousePressEvent(self, event):
+        index = self.logicalIndexAt(event.position().toPoint())
+        if index == 0:
+            new_state = Qt.Checked if self._check_state != Qt.Checked else Qt.Unchecked
+            self._check_state = new_state
+            self.checkStateChanged.emit(new_state)
+            self.updateSection(0)
+        else:
+            super().mousePressEvent(event)
+
+    def paintSection(self, painter, rect, logicalIndex):
+        painter.save()
+        super().paintSection(painter, rect, logicalIndex)
+        painter.restore()
+
+        if logicalIndex == 0:
+            option = QStyleOptionButton()
+            cb_size = min(rect.width(), rect.height()) - 4
+            option.rect = QRect(
+                rect.x() + (rect.width() - cb_size) // 2,
+                rect.y() + (rect.height() - cb_size) // 2,
+                cb_size,
+                cb_size,
+            )
+            if self._check_state == Qt.Checked:
+                option.state = QStyle.State_On
+            elif self._check_state == Qt.PartiallyChecked:
+                option.state = QStyle.State_NoChange
+            else:
+                option.state = QStyle.State_Off
+            self.style().drawControl(QStyle.CE_CheckBox, option, painter)
 
 
 def apply_dark_theme(app):
