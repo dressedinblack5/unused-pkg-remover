@@ -3,7 +3,9 @@ __pycache__/
 *.pyo
 .env
 .venv
+build/
 dist/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.playwright-mcp/
