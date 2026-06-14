@@ -10,7 +10,7 @@ Steam/Proton junk, and more.
 
 ## Features
 
-### 10 Scan Modes
+### 11 Scan Modes
 
 | Mode | What It Finds |
 |------|--------------|
@@ -18,9 +18,10 @@ Steam/Proton junk, and more.
 | **Pacman Cache** | Cached package versions not currently installed |
 | **All Pacman Cache** | **Every** `.pkg.tar.*` file in `/var/cache/pacman/pkg/` |
 | **AUR Cache** | Source/build directories under `~/.cache/yay/` and `~/.cache/paru/` |
-| **Flatpak Runtimes** | Unused Flatpak runtimes (`flatpak list --unused`) |
+| **Flatpak Runtimes** | Unused Flatpak runtimes (`flatpak uninstall --unused`) |
 | **Broken Packages** | Packages with missing files (`pacman -Qk`) |
 | **AUR Build Deps** | Orphaned AUR packages (no longer needed by any installed package) |
+| **Ollama Models** | Locally installed Ollama models (`ollama list`) |
 | **Orphaned Proton Prefixes** | Steam app compatdata directories whose game is no longer installed |
 | **Obsolete Steam Runtimes** | Steam runtime/build directories not referenced by any installed game |
 | **Stale Launcher Runners** | Runner directories from Lutris, Heroic, or Bottles |
@@ -35,6 +36,7 @@ Modes that require unavailable tools are hidden from the dropdown automatically.
 - Flatpak runtimes removed with `flatpak uninstall -y`
 - AUR build deps cleaned with `yay -Yc --noconfirm`
 - AUR cache cleaned via `rm -rf` on source directories
+- Ollama models removed with `ollama rm`
 - Steam/Proton/launcher directories cleaned via `rm -rf`
 - Batch chunking (50 packages max) to avoid ARG_MAX
 - Progress dialog with cancel support
@@ -67,7 +69,7 @@ Modes that require unavailable tools are hidden from the dropdown automatically.
 - PySide6 >= 6.5
 - `pacman`, `expac`, `pkexec`
 - Arch Linux (or derivative with compatible package tools)
-- Optional: `flatpak`, `yay`/`paru`, `steam`, `lutris`, `heroic`, `bottles`
+- Optional: `flatpak`, `ollama`, `yay`/`paru`, `steam`, `lutris`, `heroic`, `bottles`
 
 ## Installation
 
@@ -158,26 +160,37 @@ a **warning only** — it does not block removal.
    button that re-runs with `--nodeps`
 3. **Force mode** (`--no-deps` flag) — skips the dialog entirely
 
-Non-pacman modes (cache, flatpak, Steam, etc.) use appropriate tools:
-`pkexec rm`, `flatpak uninstall`, `yay -Yc`, or `rm -rf` on user-owned dirs.
+Non-pacman modes (cache, flatpak, Ollama, Steam, etc.) use appropriate tools:
+`pkexec rm`, `flatpak uninstall`, `ollama rm`, `yay -Yc`, or `rm -rf` on user-owned dirs.
 
 ## Project
 
 ```
 unused-pkg-remover/
 ├── main.py                    # Entry point shim
+├── PKGBUILD                   # AUR package build file
 ├── pyproject.toml             # Package metadata & CLI entry point
 ├── unused_pkg_remover/
 │   ├── __init__.py
 │   ├── main.py                # Display check & GUI launcher
-│   ├── gui.py                 # Qt6 window, table, theme, removal logic
-│   ├── scanner.py             # All scanning functions (orphans, cache, flatpak, broken, Steam, …)
-│   └── services.py            # Removal, logging, ignore operations
+│   ├── constants.py           # Shared constants
+│   ├── scanner.py             # All scanning functions (orphans, cache, flatpak, broken, Steam, Ollama, …)
+│   ├── services.py            # Removal, logging, ignore operations
+│   └── gui/                   # PySide6 GUI package
+│       ├── __init__.py        # QApplication bootstrap & dark theme
+│       ├── constants.py       # Mode registry, scan/removal mappings
+│       ├── main_window.py     # Main window, table, removal flow
+│       ├── theme.py           # Dark Fusion theme, styled items
+│       └── workers.py         # QThread workers for scan/removal
 ├── tests/
 │   ├── test_scanner.py        # Tests for all scan modes with mocked subprocess
 │   ├── test_services.py       # Service layer tests
 │   ├── test_main.py           # CLI argument tests
 │   └── test_gui_utils.py      # Formatting/sorting utility tests
+├── aur/                       # AUR packaging files
+│   ├── .SRCINFO
+│   ├── PKGBUILD
+│   └── unused-pkg-remover.desktop
 ├── .github/workflows/ci.yml   # ruff lint/format + pytest (3.11/3.12/3.13)
 └── README.md
 ```
