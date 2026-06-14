@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unused-pkg-remover"
-version = "1.2.0"
+version = "1.2.2"
 description = "GUI tool to find and remove orphaned Arch Linux packages"
 readme = "README.md"
 license = "MIT"
