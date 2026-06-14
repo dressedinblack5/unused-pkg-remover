@@ -360,17 +360,21 @@ def get_unused_flatpaks() -> list[dict]:
         return []
     env = {**os.environ, "LANG": "C"}
     result = subprocess.run(
-        ["flatpak", "uninstall", "--unused", "--noninteractive", "--dry-run"],
+        ["flatpak", "uninstall", "--unused", "--noninteractive"],
         capture_output=True,
         text=True,
         env=env,
     )
     if result.returncode != 0:
-        return []
+        msg = (
+            result.stderr.strip()
+            or f"flatpak uninstall --unused exited with code {result.returncode}"
+        )
+        raise RuntimeError(msg)
     names = []
     for line in result.stdout.splitlines():
         ls = line.strip()
-        if ls and not ls.startswith("These"):
+        if ls and not ls.startswith("These") and ls != "Nothing unused to uninstall":
             names.append(ls)
 
     sizes = {}
@@ -641,6 +645,41 @@ def _scan_runner_dir(root: Path, prefix: str, desc: str, sep: str = ":") -> list
                 "type_tag": "launcher-runner",
             }
         )
+    return packages
+
+
+def get_ollama_models() -> list[dict]:
+    """Fetch locally installed Ollama models via `ollama list`."""
+    if not shutil.which("ollama"):
+        return []
+
+    result = subprocess.run(["ollama", "list"], capture_output=True, text=True)
+    if result.returncode != 0:
+        msg = result.stderr.strip() or f"ollama list exited with code {result.returncode}"
+        raise RuntimeError(msg)
+
+    packages = []
+    lines = result.stdout.splitlines()
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        name = parts[0]
+        # ollama list SIZE column is two tokens: number + unit, e.g. "1.2" "GB"
+        size_str = f"{parts[2]} {parts[3]}"
+        size = _parse_size(size_str)
+        packages.append(
+            {
+                "name": name,
+                "size": size,
+                "desc": "Ollama model",
+                "type_tag": "ollama",
+            }
+        )
+
+    packages.sort(key=lambda x: x["size"], reverse=True)
     return packages
 
 

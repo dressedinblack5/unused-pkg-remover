@@ -331,6 +331,7 @@ class OrphanCleaner(QMainWindow):
             "aur-cache": "#79c0ff",
             "proton-prefix": "#ff7b72",
             "steam-runtime": "#d2a8ff",
+            "ollama": "#79c0ff",
             "launcher-runner": "#ffab70",
         }
 

@@ -8,6 +8,7 @@ from ..scanner import (
     get_broken_packages,
     get_cache_packages,
     get_obsolete_steam_runtimes,
+    get_ollama_models,
     get_orphaned_proton_prefixes,
     get_stale_launcher_runners,
     get_unused_flatpaks,
@@ -20,6 +21,7 @@ from ..services import (
     remove_cache_packages,
     remove_flatpak_packages,
     remove_obsolete_steam_runtimes,
+    remove_ollama_models,
     remove_orphaned_proton_prefixes,
     remove_stale_launcher_runners,
 )
@@ -34,6 +36,7 @@ _SCAN_FUNCTIONS = {
     "aur-cache": lambda: (get_aur_cache_packages(), 0),
     "proton-prefix": lambda: (get_orphaned_proton_prefixes(), 0),
     "steam-runtime": lambda: (get_obsolete_steam_runtimes(), 0),
+    "ollama": lambda: (get_ollama_models(), 0),
     "launcher-runner": lambda: (get_stale_launcher_runners(), 0),
 }
 
@@ -57,6 +60,10 @@ _REMOVAL_ACTIONS = {
         "Removing Steam runtimes...",
         lambda w: remove_obsolete_steam_runtimes(w.names),
     ),
+    "ollama": (
+        "Removing Ollama models...",
+        lambda w: remove_ollama_models(w.names),
+    ),
     "launcher-runner": (
         "Removing launcher runners...",
         lambda w: remove_stale_launcher_runners(w.names),
@@ -71,12 +78,22 @@ _AVAILABLE_MODES: list[tuple[str, str]] = [
 if shutil.which("flatpak"):
     _AVAILABLE_MODES.append(("flatpak", "Flatpak Runtimes"))
 _AVAILABLE_MODES.append(("broken", "Broken Packages"))
-if shutil.which("yay") or shutil.which("paru"):
+if shutil.which("ollama"):
+    _AVAILABLE_MODES.append(("ollama", "Ollama Models"))
+has_aur_helper = shutil.which("yay") or shutil.which("paru")
+if has_aur_helper:
     _AVAILABLE_MODES.append(("aur-dep", "AUR Build Deps"))
-_AVAILABLE_MODES.append(("aur-cache", "AUR Build Cache"))
-_AVAILABLE_MODES.append(("proton-prefix", "Proton Prefixes"))
-_AVAILABLE_MODES.append(("steam-runtime", "Steam Runtimes"))
-_AVAILABLE_MODES.append(("launcher-runner", "Launcher Runners"))
+    _AVAILABLE_MODES.append(("aur-cache", "AUR Build Cache"))
+_home = Path.home()
+if _home.joinpath(".steam/steam/steamapps/compatdata").exists():
+    _AVAILABLE_MODES.append(("proton-prefix", "Proton Prefixes"))
+if _home.joinpath(".steam/steam/steamapps/common").exists():
+    _AVAILABLE_MODES.append(("steam-runtime", "Steam Runtimes"))
+if any(
+    _home.joinpath(p).exists()
+    for p in [".local/share/lutris/runners", ".config/heroic", ".local/share/bottles/runners"]
+):
+    _AVAILABLE_MODES.append(("launcher-runner", "Launcher Runners"))
 
 
 def get_ignore_file() -> Path:
