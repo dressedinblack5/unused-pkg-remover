@@ -10,7 +10,7 @@ Steam/Proton junk, and more.
 
 ## Features
 
-### 10 Scan Modes
+### 11 Scan Modes
 
 | Mode | What It Finds |
 |------|--------------|
@@ -20,6 +20,7 @@ Steam/Proton junk, and more.
 | **AUR Cache** | Source/build directories under `~/.cache/yay/` and `~/.cache/paru/` |
 | **Flatpak Runtimes** | Unused Flatpak runtimes (`flatpak list --unused`) |
 | **Broken Packages** | Packages with missing files (`pacman -Qk`) |
+| **Ollama Models** | Locally pulled Ollama models (`ollama list`) |
 | **AUR Build Deps** | Orphaned AUR packages (no longer needed by any installed package) |
 | **Orphaned Proton Prefixes** | Steam app compatdata directories whose game is no longer installed |
 | **Obsolete Steam Runtimes** | Steam runtime/build directories not referenced by any installed game |
@@ -67,7 +68,7 @@ Modes that require unavailable tools are hidden from the dropdown automatically.
 - PySide6 >= 6.5
 - `pacman`, `expac`, `pkexec`
 - Arch Linux (or derivative with compatible package tools)
-- Optional: `flatpak`, `yay`/`paru`, `steam`, `lutris`, `heroic`, `bottles`
+- Optional: `flatpak`, `ollama`, `yay`/`paru`, `steam`, `lutris`, `heroic`, `bottles`
 
 ## Installation
 
@@ -79,7 +80,7 @@ yay -S unused-pkg-remover
 paru -S unused-pkg-remover
 ```
 
-*Once published on AUR — the `aur/` directory contains the PKGBUILD if you want to build manually.*
+The `aur/` directory contains the PKGBUILD if you want to build manually via `makepkg -si`.
 
 ### PyPI / Local
 
@@ -170,9 +171,17 @@ unused-pkg-remover/
 ├── unused_pkg_remover/
 │   ├── __init__.py
 │   ├── main.py                # Display check & GUI launcher
-│   ├── gui.py                 # Qt6 window, table, theme, removal logic
 │   ├── scanner.py             # All scanning functions (orphans, cache, flatpak, broken, Steam, …)
-│   └── services.py            # Removal, logging, ignore operations
+│   ├── services.py            # Removal, logging, ignore operations
+│   └── gui/
+│       ├── __init__.py
+│       ├── main_window.py     # Qt6 window, table, removal logic
+│       ├── workers.py         # Background scan/removal threads
+│       ├── constants.py       # Scan modes, column indices, styles
+│       └── theme.py           # Fusion dark theme & palette
+├── aur/
+│   ├── PKGBUILD               # AUR build recipe
+│   └── .SRCINFO               # AUR metadata
 ├── tests/
 │   ├── test_scanner.py        # Tests for all scan modes with mocked subprocess
 │   ├── test_services.py       # Service layer tests
