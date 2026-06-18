@@ -9,7 +9,6 @@ from unused_pkg_remover.services import (
     RemovalError,
     add_to_ignore,
     log_removal,
-    remove_all_cache_packages,
     remove_aur_cache_packages,
     remove_aur_deps,
     remove_cache_packages,
@@ -192,7 +191,7 @@ class TestRemoveAllCachePackages:
             patch("unused_pkg_remover.services.Path.__truediv__", return_value=mock_f),
             self._mock_proc() as mock_popen,
         ):
-            remove_all_cache_packages(["firefox-134.0-1-x86_64"])
+            remove_cache_packages(["firefox-134.0-1-x86_64"], exact=True)
             args = mock_popen.call_args[0][0]
             assert "pkexec" in args
             assert "rm" in args
@@ -207,7 +206,7 @@ class TestRemoveAllCachePackages:
             patch("unused_pkg_remover.services.Path.__truediv__", return_value=mock_f),
             self._mock_proc() as mock_popen,
         ):
-            remove_all_cache_packages(["no-such-pkg"])
+            remove_cache_packages(["no-such-pkg"], exact=True)
             mock_popen.assert_not_called()
 
 

@@ -9,8 +9,7 @@ from pathlib import Path
 from .constants import _CACHE_EXTS, format_size
 
 
-class RemovalError(Exception):
-    """Raised when package removal via pacman fails."""
+RemovalError = RuntimeError
 
 
 _data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
@@ -79,14 +78,23 @@ def add_to_ignore(ignore_file_path: Path, package_names: list[str]) -> None:
             f.write(f"{name}\n")
 
 
-def remove_cache_packages(names: list[str], cancel_check: Callable | None = None) -> None:
+def remove_cache_packages(
+    names: list[str], *, exact: bool = False, cancel_check: Callable | None = None
+) -> None:
     cache_dir = Path("/var/cache/pacman/pkg")
     files = []
     for name in names:
-        pattern = re.compile(rf"^{re.escape(name)}-\d")
-        for f in cache_dir.iterdir():
-            if pattern.match(f.name):
-                files.append(str(f))
+        if exact:
+            for ext in _CACHE_EXTS:
+                p = cache_dir / f"{name}{ext}"
+                if p.exists():
+                    files.append(str(p))
+                    break
+        else:
+            pattern = re.compile(rf"^{re.escape(name)}-\d")
+            for f in cache_dir.iterdir():
+                if pattern.match(f.name):
+                    files.append(str(f))
     if not files:
         return
     _run_pkexec(["pkexec", "rm", "-f"] + files, cancel_check=cancel_check)
@@ -115,21 +123,6 @@ def remove_aur_deps() -> None:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
         raise RemovalError(e.stderr or str(e)) from e
-
-
-def remove_all_cache_packages(keys: list[str], cancel_check: Callable | None = None) -> None:
-    """Remove specific cache files by their filename stems (extension excluded)."""
-    cache_dir = Path("/var/cache/pacman/pkg")
-    files = []
-    for key in keys:
-        for ext in _CACHE_EXTS:
-            p = cache_dir / f"{key}{ext}"
-            if p.exists():
-                files.append(str(p))
-                break
-    if not files:
-        return
-    _run_pkexec(["pkexec", "rm", "-f"] + files, cancel_check=cancel_check)
 
 
 def remove_aur_cache_packages(names: list[str]) -> None:

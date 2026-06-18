@@ -1,4 +1,3 @@
-import functools
 import os
 import re
 import shutil
@@ -6,12 +5,6 @@ import subprocess
 from pathlib import Path
 
 from .constants import _CACHE_ARCHES, _CACHE_EXTS
-
-
-def clear_package_caches() -> None:
-    get_aur_packages.cache_clear()
-    get_explicitly_installed_packages.cache_clear()
-    _get_installed_packages.cache_clear()
 
 
 def get_ignored_packages() -> set[str]:
@@ -37,7 +30,6 @@ def get_ignored_packages() -> set[str]:
     return ignored
 
 
-@functools.cache
 def get_aur_packages() -> set[str]:
     result = subprocess.run(["pacman", "-Qqm"], capture_output=True, text=True)
     if result.returncode != 0:
@@ -45,160 +37,11 @@ def get_aur_packages() -> set[str]:
     return {pkg.lower() for pkg in result.stdout.splitlines()}
 
 
-@functools.cache
 def get_explicitly_installed_packages() -> set[str]:
     result = subprocess.run(["pacman", "-Qqe"], capture_output=True, text=True)
     if result.returncode != 0:
         return set()
     return {pkg.lower() for pkg in result.stdout.splitlines()}
-
-
-SAFE_PACKAGES = {
-    "acl",
-    "alsa-plugins",
-    "alsa-utils",
-    "amd-ucode",
-    "archlinux-keyring",
-    "bash",
-    "bash-completion",
-    "bluez",
-    "bluez-utils",
-    "btrfs-progs",
-    "ca-certificates",
-    "ca-certificates-utils",
-    "chromium",
-    "cups",
-    "coreutils",
-    "cryptsetup",
-    "curl",
-    "dbus",
-    "dhcpcd",
-    "diffutils",
-    "docker",
-    "dosfstools",
-    "e2fsprogs",
-    "efibootmgr",
-    "exfatprogs",
-    "fakeroot",
-    "file",
-    "filesystem",
-    "findutils",
-    "firefox",
-    "firewalld",
-    "fish",
-    "flatpak",
-    "fuse2",
-    "fuse3",
-    "fwupd",
-    "gawk",
-    "gcc-libs",
-    "gdm",
-    "glibc",
-    "gnome-shell",
-    "grep",
-    "grub",
-    "gzip",
-    "hwdata",
-    "inetutils",
-    "intel-ucode",
-    "iproute2",
-    "iputils",
-    "iw",
-    "iwd",
-    "kmod",
-    "less",
-    "libcap",
-    "libidn2",
-    "libnl",
-    "libpcap",
-    "libpng",
-    "libusb",
-    "libutil-linux",
-    "licenses",
-    "lightdm",
-    "linux",
-    "linux-firmware",
-    "linux-lts",
-    "logrotate",
-    "lutris",
-    "lvm2",
-    "lz4",
-    "lzo",
-    "man-db",
-    "man-pages",
-    "mdadm",
-    "mesa",
-    "mkinitcpio",
-    "nano",
-    "ncurses",
-    "netctl",
-    "networkmanager",
-    "nftables",
-    "nspr",
-    "nss",
-    "ntp",
-    "openresolv",
-    "openssh",
-    "openssl",
-    "os-prober",
-    "pacman",
-    "pacman-mirrorlist",
-    "pam",
-    "pambase",
-    "parted",
-    "pciutils",
-    "pcmciautils",
-    "perl",
-    "pinentry",
-    "pipewire",
-    "pkg-config",
-    "plasma-desktop",
-    "podman",
-    "polkit",
-    "procps-ng",
-    "psmisc",
-    "pulseaudio",
-    "python",
-    "reiserfsprogs",
-    "rsync",
-    "s-nail",
-    "sddm",
-    "sed",
-    "shadow",
-    "sqlite",
-    "steam",
-    "sudo",
-    "sysfsutils",
-    "systemd",
-    "systemd-libs",
-    "systemd-resolvconf",
-    "systemd-sysvcompat",
-    "tar",
-    "texinfo",
-    "thin-provisioning-tools",
-    "thunderbird",
-    "timezone",
-    "tpm2-tss",
-    "tzdata",
-    "usbutils",
-    "util-linux",
-    "vi",
-    "vim",
-    "wget",
-    "which",
-    "wine",
-    "wireless-regdb",
-    "wireless-tools",
-    "wireplumber",
-    "wpa_supplicant",
-    "xfce4-meta",
-    "xfsprogs",
-    "xz",
-    "zerofree",
-    "zlib",
-    "zsh",
-    "zstd",
-}
 
 
 def get_dependents(pkg_name: str) -> list[str]:
@@ -266,7 +109,6 @@ def _query_expac(package_names: list[str]) -> list[dict]:
 
 
 def get_unused_packages() -> tuple[list[dict], int]:
-    clear_package_caches()
     if not shutil.which("expac"):
         raise RuntimeError("expac not found. Install it: sudo pacman -S expac")
 
@@ -274,7 +116,7 @@ def get_unused_packages() -> tuple[list[dict], int]:
     if not orphans:
         return [], 0
 
-    ignored = get_ignored_packages() | SAFE_PACKAGES | get_explicitly_installed_packages()
+    ignored = get_ignored_packages() | get_explicitly_installed_packages()
     aur_pkgs = get_aur_packages()
 
     unused = []
@@ -289,7 +131,6 @@ def get_unused_packages() -> tuple[list[dict], int]:
     return unused, filtered_count
 
 
-@functools.cache
 def _get_installed_packages() -> dict[str, str]:
     result = subprocess.run(["pacman", "-Q"], capture_output=True, text=True)
     if result.returncode != 0:
@@ -321,47 +162,48 @@ def _extract_cache_pkg_name(filename: str) -> str:
     return stem.lower()
 
 
-def get_cache_packages() -> list[dict]:
-    clear_package_caches()
+def _iter_cache_entries() -> list[dict]:
+    """Return {name, extracted, size, installed} for each pacman cache file."""
     cache_dir = Path("/var/cache/pacman/pkg")
     if not cache_dir.exists():
         return []
-
     installed = _get_installed_packages()
-
-    by_name: dict[str, list[Path]] = {}
+    entries = []
     for f in cache_dir.iterdir():
         if not f.is_file() or not any(f.name.endswith(ext) for ext in _CACHE_EXTS):
             continue
-        pkg_name = _extract_cache_pkg_name(f.name)
-        by_name.setdefault(pkg_name, []).append(f)
-
-    packages = []
-    for name_lower, files in by_name.items():
-        if name_lower in installed:
-            continue
-        total_size = sum(f.stat().st_size for f in files)
-        packages.append(
-            {
-                "name": name_lower,
-                "size": total_size,
-                "desc": f"{len(files)} cached version(s), not installed",
-                "type_tag": "cache",
-            }
+        extracted = _extract_cache_pkg_name(f.name)
+        entries.append(
+            {"name": f.name, "extracted": extracted, "size": f.stat().st_size, "installed": extracted in installed}
         )
+    return entries
+
+
+def get_cache_packages() -> list[dict]:
+    """Cached packages not currently installed, grouped by package name."""
+    by_name: dict[str, list[dict]] = {}
+    for e in _iter_cache_entries():
+        by_name.setdefault(e["extracted"], []).append(e)
+    packages = [
+        {
+            "name": name,
+            "size": sum(e["size"] for e in entries),
+            "desc": f"{len(entries)} cached version(s), not installed",
+            "type_tag": "cache",
+        }
+        for name, entries in by_name.items()
+        if not entries[0]["installed"]
+    ]
+    packages.sort(key=lambda x: x["size"], reverse=True)
     return packages
 
 
-_SIZE_UNITS = {"bytes": 1, "kb": 1024, "mb": 1024**2, "gb": 1024**3, "tb": 1024**4}
-
-
-def _parse_size(s: str) -> int:
+def _parse_human_size(s: str) -> int:
     s = s.strip().lower()
-    for unit, mul in _SIZE_UNITS.items():
+    for unit, mul in [("kb", 1024), ("mb", 1024**2), ("gb", 1024**3), ("tb", 1024**4)]:
         if s.endswith(unit):
-            num = s[: -len(unit)].strip().rstrip(".")
             try:
-                return int(float(num) * mul)
+                return int(float(s[: -len(unit)].strip().rstrip(".")) * mul)
             except ValueError:
                 return 0
     try:
@@ -406,7 +248,7 @@ def get_unused_flatpaks() -> list[dict]:
                     ls = line.strip().lower()
                     if ls.startswith("installed size:"):
                         val = line.split(":", 1)[-1].strip()
-                        sizes[name] = _parse_size(val)
+                        sizes[name] = _parse_human_size(val)
                         break
 
     packages = [
@@ -457,7 +299,6 @@ def get_broken_packages() -> list[dict]:
 
 
 def get_aur_build_deps() -> list[dict]:
-    clear_package_caches()
     orphans = _get_orphan_names()
     if not orphans:
         return []
@@ -481,37 +322,16 @@ def get_aur_build_deps() -> list[dict]:
 
 
 def get_all_cache_packages() -> list[dict]:
-    """Show every cached package file including installed versions."""
-    clear_package_caches()
-    cache_dir = Path("/var/cache/pacman/pkg")
-    if not cache_dir.exists():
-        return []
-
-    installed = _get_installed_packages()
-
-    packages = []
-    for f in cache_dir.iterdir():
-        if not f.is_file() or not any(f.name.endswith(ext) for ext in _CACHE_EXTS):
-            continue
-
-        name = f.name
-        for ext in _CACHE_EXTS:
-            if name.endswith(ext):
-                name = name[: -len(ext)]
-                break
-
-        is_installed = _extract_cache_pkg_name(f.name) in installed
-
-        size = f.stat().st_size
-        packages.append(
-            {
-                "name": name,
-                "size": size,
-                "desc": "installed" if is_installed else "not installed",
-                "type_tag": "cache",
-            }
-        )
-
+    """Every cache file including installed versions (one row per file)."""
+    packages = [
+        {
+            "name": e["name"],
+            "size": e["size"],
+            "desc": "installed" if e["installed"] else "not installed",
+            "type_tag": "cache",
+        }
+        for e in _iter_cache_entries()
+    ]
     packages.sort(key=lambda x: x["size"], reverse=True)
     return packages
 
@@ -684,7 +504,7 @@ def get_ollama_models() -> list[dict]:
         name = parts[0]
         # ollama list SIZE column is two tokens: number + unit, e.g. "1.2" "GB"
         size_str = f"{parts[2]} {parts[3]}"
-        size = _parse_size(size_str)
+        size = _parse_human_size(size_str)
         packages.append(
             {
                 "name": name,

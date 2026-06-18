@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, mock_open, patch
 import pytest
 
 from unused_pkg_remover.scanner import (
-    SAFE_PACKAGES,
     _get_orphan_names,
     _query_expac,
     get_all_cache_packages,
@@ -108,16 +107,6 @@ class TestGetExplicitlyInstalledPackages:
         with patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_result):
             result = get_explicitly_installed_packages()
             assert result == set()
-
-
-class TestSafePackages:
-    def test_is_non_empty_set(self):
-        assert isinstance(SAFE_PACKAGES, set)
-        assert len(SAFE_PACKAGES) > 0
-
-    def test_contains_critical_packages(self):
-        for pkg in ["glibc", "systemd", "linux", "pacman", "bash"]:
-            assert pkg in SAFE_PACKAGES
 
 
 class TestGetOrphanNames:

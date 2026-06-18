@@ -14,17 +14,6 @@ from ..scanner import (
     get_unused_flatpaks,
     get_unused_packages,
 )
-from ..services import (
-    remove_all_cache_packages,
-    remove_aur_cache_packages,
-    remove_aur_deps,
-    remove_cache_packages,
-    remove_flatpak_packages,
-    remove_obsolete_steam_runtimes,
-    remove_ollama_models,
-    remove_orphaned_proton_prefixes,
-    remove_stale_launcher_runners,
-)
 
 _SCAN_FUNCTIONS = {
     "orphans": get_unused_packages,
@@ -40,34 +29,16 @@ _SCAN_FUNCTIONS = {
     "launcher-runner": lambda: (get_stale_launcher_runners(), 0),
 }
 
-_REMOVAL_ACTIONS = {
-    "cache": (
-        "Removing cached packages...",
-        lambda w: remove_cache_packages(w.names, cancel_check=lambda: w._cancelled),
-    ),
-    "all-cache": (
-        "Removing cached package files...",
-        lambda w: remove_all_cache_packages(w.names, cancel_check=lambda: w._cancelled),
-    ),
-    "flatpak": ("Removing Flatpak runtimes...", lambda w: remove_flatpak_packages(w.names)),
-    "aur-dep": ("Cleaning AUR build deps...", lambda _: remove_aur_deps()),
-    "aur-cache": ("Removing AUR build sources...", lambda w: remove_aur_cache_packages(w.names)),
-    "proton-prefix": (
-        "Removing Proton prefixes...",
-        lambda w: remove_orphaned_proton_prefixes(w.names),
-    ),
-    "steam-runtime": (
-        "Removing Steam runtimes...",
-        lambda w: remove_obsolete_steam_runtimes(w.names),
-    ),
-    "ollama": (
-        "Removing Ollama models...",
-        lambda w: remove_ollama_models(w.names),
-    ),
-    "launcher-runner": (
-        "Removing launcher runners...",
-        lambda w: remove_stale_launcher_runners(w.names),
-    ),
+_REMOVAL_LABELS = {
+    "cache": "Removing cached packages...",
+    "all-cache": "Removing cached package files...",
+    "flatpak": "Removing Flatpak runtimes...",
+    "aur-dep": "Cleaning AUR build deps...",
+    "aur-cache": "Removing AUR build sources...",
+    "proton-prefix": "Removing Proton prefixes...",
+    "steam-runtime": "Removing Steam runtimes...",
+    "ollama": "Removing Ollama models...",
+    "launcher-runner": "Removing launcher runners...",
 }
 
 _AVAILABLE_MODES: list[tuple[str, str]] = [

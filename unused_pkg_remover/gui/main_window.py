@@ -1,4 +1,4 @@
-from PySide6.QtCore import QPropertyAnimation, QSettings, Qt, QThread, QTimer
+from PySide6.QtCore import QSettings, Qt, QThread, QTimer
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -6,7 +6,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QGraphicsOpacityEffect,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -24,7 +23,6 @@ from PySide6.QtWidgets import (
 )
 
 from ..constants import format_size
-from ..scanner import get_dependents
 from ..services import BATCH_SIZE, HISTORY_FILE, RemovalError, add_to_ignore, log_removal
 from .constants import (
     _AVAILABLE_MODES,
@@ -245,16 +243,6 @@ class OrphanCleaner(QMainWindow):
         self._save_settings()
         event.accept()
 
-    def _fade_table(self, start: float, end: float, callback):
-        effect = QGraphicsOpacityEffect(self.table)
-        self.table.setGraphicsEffect(effect)
-        self._fade_anim = QPropertyAnimation(effect, b"opacity")
-        self._fade_anim.setDuration(120)
-        self._fade_anim.setStartValue(start)
-        self._fade_anim.setEndValue(end)
-        self._fade_anim.finished.connect(callback)
-        self._fade_anim.start()
-
     def _load_packages(self):
         if self._removal_running or self._loading:
             return
@@ -266,7 +254,7 @@ class OrphanCleaner(QMainWindow):
         mode_label = self.mode_combo.currentText()
         self.status_bar.showMessage(f"Scanning {mode_label.lower()}...")
         self.table.setEnabled(False)
-        self._fade_table(1.0, 0.25, self._do_load_packages)
+        self._do_load_packages()
 
     def _on_mode_changed(self, index: int) -> None:
         self._scan_mode = self._mode_keys[index]
@@ -380,7 +368,7 @@ class OrphanCleaner(QMainWindow):
             self.table.setItem(row, COL_DESC, desc_item)
 
         self.table.setSortingEnabled(True)
-        self._fade_table(0.25, 1.0, lambda: self._finish_load(filtered))
+        self._finish_load(filtered)
 
     def _on_scan_error(self, msg: str) -> None:
         self._cleanup_scan_thread()
@@ -389,7 +377,7 @@ class OrphanCleaner(QMainWindow):
         filtered = 0
         self.table.setRowCount(0)
         self.table.setSortingEnabled(True)
-        self._fade_table(1.0, 1.0, lambda: self._finish_load(filtered))
+        self._finish_load(filtered)
 
     def _cleanup_qthread(self, thread_attr: str, worker_attr: str) -> None:
         worker = getattr(self, worker_attr, None)
@@ -543,14 +531,6 @@ class OrphanCleaner(QMainWindow):
 
     def _checked_packages(self):
         return [self.packages[i] for i in self._checked_indices()]
-
-    def _check_dependents(self, names):
-        dependents = {}
-        for name in names:
-            deps = get_dependents(name)
-            if deps:
-                dependents[name] = deps
-        return dependents
 
     def _show_removal_details(
         self, pkgs: list[dict], total_size: int, dep_warning: str, dry_run: bool = False

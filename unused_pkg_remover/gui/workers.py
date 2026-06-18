@@ -1,8 +1,19 @@
 from PySide6.QtCore import QObject, Signal
 
 from ..scanner import get_dependents
-from ..services import RemovalError, remove_packages_batch
-from .constants import _REMOVAL_ACTIONS, _SCAN_FUNCTIONS
+from ..services import (
+    RemovalError,
+    remove_aur_cache_packages,
+    remove_aur_deps,
+    remove_cache_packages,
+    remove_flatpak_packages,
+    remove_obsolete_steam_runtimes,
+    remove_ollama_models,
+    remove_orphaned_proton_prefixes,
+    remove_packages_batch,
+    remove_stale_launcher_runners,
+)
+from .constants import _REMOVAL_LABELS, _SCAN_FUNCTIONS
 
 
 class ScanWorker(QObject):
@@ -77,12 +88,32 @@ class RemovalWorker(QObject):
     def cancel(self) -> None:
         self._cancelled = True
 
+    def _run_nonorphan(self) -> None:
+        m = self.mode
+        self.progress.emit(_REMOVAL_LABELS.get(m, "Removing..."))
+        if m == "cache":
+            remove_cache_packages(self.names, cancel_check=lambda: self._cancelled)
+        elif m == "all-cache":
+            remove_cache_packages(self.names, exact=True, cancel_check=lambda: self._cancelled)
+        elif m == "flatpak":
+            remove_flatpak_packages(self.names)
+        elif m == "aur-dep":
+            remove_aur_deps()
+        elif m == "aur-cache":
+            remove_aur_cache_packages(self.names)
+        elif m == "proton-prefix":
+            remove_orphaned_proton_prefixes(self.names)
+        elif m == "steam-runtime":
+            remove_obsolete_steam_runtimes(self.names)
+        elif m == "ollama":
+            remove_ollama_models(self.names)
+        elif m == "launcher-runner":
+            remove_stale_launcher_runners(self.names)
+
     def run(self) -> None:
         try:
-            if self.mode in _REMOVAL_ACTIONS:
-                msg, action = _REMOVAL_ACTIONS[self.mode]
-                self.progress.emit(msg)
-                action(self)
+            if self.mode in _REMOVAL_LABELS:
+                self._run_nonorphan()
             else:
                 num_batches = (len(self.names) + self.batch_size - 1) // self.batch_size
                 for i in range(0, len(self.names), self.batch_size):
