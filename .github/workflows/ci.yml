@@ -14,6 +14,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
       - run: pip install ruff
       - run: ruff check .
       - run: ruff format --check .
@@ -28,31 +29,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq qt6-base-dev libgl1-mesa-dev 2>/dev/null || true
+          sudo apt-get install -y -qq qt6-base-dev libgl1-mesa-dev || true
       - name: Install Python dependencies
-        run: |
-          pip install --upgrade pip
-          pip install ".[dev]" pytest
+        run: pip install ".[dev]"
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: |
-          set +e
-          python -m pytest -v --tb=short >/tmp/pytest.log 2>&1
-          RC=$?
-          echo "::error::pytest exit code: $RC"
-          if grep -E "FAILED|ERRORS|ERROR:" /tmp/pytest.log >/dev/null 2>&1; then
-            echo "=== FAILED/ERROR TESTS ==="
-            grep -E "FAILED|ERRORS|ERROR:" /tmp/pytest.log | while IFS= read -r line; do
-              echo "::error::$line"
-            done
-          else
-            echo "=== LAST 10 LINES ==="
-            tail -10 /tmp/pytest.log | while IFS= read -r line; do
-              echo "::error::$line"
-            done
-          fi
-          exit $RC
+        run: python -m pytest -v --tb=short
