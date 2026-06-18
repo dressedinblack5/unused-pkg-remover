@@ -108,6 +108,20 @@ def _query_expac(package_names: list[str]) -> list[dict]:
     return packages
 
 
+def _get_base_packages() -> set[str]:
+    """Packages in base/base-devel groups — never remove these."""
+    try:
+        result = subprocess.run(
+            ["pacman", "-Qq", "--groups", "base", "base-devel"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            return set(result.stdout.splitlines())
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return set()
+
+
 def get_unused_packages() -> tuple[list[dict], int]:
     if not shutil.which("expac"):
         raise RuntimeError("expac not found. Install it: sudo pacman -S expac")
@@ -116,7 +130,7 @@ def get_unused_packages() -> tuple[list[dict], int]:
     if not orphans:
         return [], 0
 
-    ignored = get_ignored_packages() | get_explicitly_installed_packages()
+    ignored = get_ignored_packages() | get_explicitly_installed_packages() | _get_base_packages()
     aur_pkgs = get_aur_packages()
 
     unused = []
@@ -163,7 +177,7 @@ def _extract_cache_pkg_name(filename: str) -> str:
 
 
 def _iter_cache_entries() -> list[dict]:
-    """Return {name, extracted, size, installed} for each pacman cache file."""
+    """Return {stem, extracted, size, installed} for each pacman cache file."""
     cache_dir = Path("/var/cache/pacman/pkg")
     if not cache_dir.exists():
         return []
@@ -173,9 +187,14 @@ def _iter_cache_entries() -> list[dict]:
         if not f.is_file() or not any(f.name.endswith(ext) for ext in _CACHE_EXTS):
             continue
         extracted = _extract_cache_pkg_name(f.name)
+        stem = f.name
+        for ext in _CACHE_EXTS:
+            if stem.endswith(ext):
+                stem = stem[: -len(ext)]
+                break
         entries.append(
             {
-                "name": f.name,
+                "stem": stem,
                 "extracted": extracted,
                 "size": f.stat().st_size,
                 "installed": extracted in installed,
@@ -330,7 +349,7 @@ def get_all_cache_packages() -> list[dict]:
     """Every cache file including installed versions (one row per file)."""
     packages = [
         {
-            "name": e["name"],
+            "name": e["stem"],
             "size": e["size"],
             "desc": "installed" if e["installed"] else "not installed",
             "type_tag": "cache",

@@ -346,10 +346,14 @@ class TestGetUnusedPackages:
                             "unused_pkg_remover.scanner.get_explicitly_installed_packages",
                             return_value=set(),
                         ):
-                            result, filtered = get_unused_packages()
-                            assert len(result) == 1
-                            assert result[0]["name"] == "some-orphan"
-                            assert filtered == 1
+                            with patch(
+                                "unused_pkg_remover.scanner._get_base_packages",
+                                return_value={"glibc"},
+                            ):
+                                result, filtered = get_unused_packages()
+                                assert len(result) == 1
+                                assert result[0]["name"] == "some-orphan"
+                                assert filtered == 1
 
     def test_full_pipeline_with_aur_and_sorting(self):
         mock_pacman = MagicMock()
@@ -374,8 +378,12 @@ class TestGetUnusedPackages:
                             "unused_pkg_remover.scanner.get_explicitly_installed_packages",
                             return_value=set(),
                         ):
-                            result, filtered = get_unused_packages()
-                            assert len(result) == 2
+                            with patch(
+                                "unused_pkg_remover.scanner._get_base_packages",
+                                return_value=set(),
+                            ):
+                                result, filtered = get_unused_packages()
+                                assert len(result) == 2
                             assert result[0]["name"] == "big-pkg"
                             assert result[0]["is_aur"] is True
                             assert result[0]["size"] == 50000000
@@ -402,8 +410,12 @@ class TestGetUnusedPackages:
                             "unused_pkg_remover.scanner.get_explicitly_installed_packages",
                             return_value=set(),
                         ):
-                            result, filtered = get_unused_packages()
-                            assert result == []
+                            with patch(
+                                "unused_pkg_remover.scanner._get_base_packages",
+                                return_value=set(),
+                            ):
+                                result, filtered = get_unused_packages()
+                                assert result == []
 
     def test_handles_bad_size_string(self):
         mock_pacman = MagicMock()
@@ -424,8 +436,12 @@ class TestGetUnusedPackages:
                             "unused_pkg_remover.scanner.get_explicitly_installed_packages",
                             return_value=set(),
                         ):
-                            result, filtered = get_unused_packages()
-                            assert len(result) == 1
+                            with patch(
+                                "unused_pkg_remover.scanner._get_base_packages",
+                                return_value=set(),
+                            ):
+                                result, filtered = get_unused_packages()
+                                assert len(result) == 1
                             assert result[0]["size"] == 0
 
     def test_pacman_returns_nonzero(self):
@@ -433,9 +449,13 @@ class TestGetUnusedPackages:
         mock_result.returncode = 1
         with patch("unused_pkg_remover.scanner.shutil.which", return_value="/usr/bin/expac"):
             with patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_result):
-                result, filtered = get_unused_packages()
-                assert result == []
-                assert filtered == 0
+                with patch(
+                    "unused_pkg_remover.scanner._get_base_packages",
+                    return_value=set(),
+                ):
+                    result, filtered = get_unused_packages()
+                    assert result == []
+                    assert filtered == 0
 
 
 class TestGetCachePackages:
