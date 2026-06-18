@@ -174,7 +174,12 @@ def _iter_cache_entries() -> list[dict]:
             continue
         extracted = _extract_cache_pkg_name(f.name)
         entries.append(
-            {"name": f.name, "extracted": extracted, "size": f.stat().st_size, "installed": extracted in installed}
+            {
+                "name": f.name,
+                "extracted": extracted,
+                "size": f.stat().st_size,
+                "installed": extracted in installed,
+            }
         )
     return entries
 

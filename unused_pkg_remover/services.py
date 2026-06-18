@@ -8,7 +8,6 @@ from pathlib import Path
 
 from .constants import _CACHE_EXTS, format_size
 
-
 RemovalError = RuntimeError
 
 
