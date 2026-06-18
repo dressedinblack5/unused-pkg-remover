@@ -113,7 +113,9 @@ def _get_base_packages() -> set[str]:
     try:
         result = subprocess.run(
             ["pacman", "-Qq", "--groups", "base", "base-devel"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode == 0:
             return set(result.stdout.splitlines())
