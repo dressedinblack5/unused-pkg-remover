@@ -6,7 +6,6 @@ import pytest
 from unused_pkg_remover.scanner import (
     _get_orphan_names,
     _query_expac,
-    get_all_cache_packages,
     get_aur_build_deps,
     get_aur_cache_packages,
     get_aur_packages,
@@ -651,42 +650,6 @@ class TestGetAurBuildDeps:
         ):
             result = get_aur_build_deps()
             assert [p["name"] for p in result] == ["big", "medium", "small"]
-
-
-class TestGetAllCachePackages:
-    def test_returns_empty_if_dir_missing(self):
-        with patch("unused_pkg_remover.scanner.Path.exists", return_value=False):
-            assert get_all_cache_packages() == []
-
-    def test_lists_all_cache_files(self):
-        mock_f1 = MagicMock()
-        mock_f1.name = "pkg-a-1.0-1-x86_64.pkg.tar.zst"
-        mock_f1.is_file.return_value = True
-        mock_f1.stat.return_value.st_size = 5000
-        mock_f2 = MagicMock()
-        mock_f2.name = "pkg-b-2.0-1-any.pkg.tar.zst"
-        mock_f2.is_file.return_value = True
-        mock_f2.stat.return_value.st_size = 3000
-        mock_f3 = MagicMock()
-        mock_f3.name = "not-a-pkg.sig"
-        mock_f3.is_file.return_value = True
-        mock_f3.stat.return_value.st_size = 100
-
-        with (
-            patch("unused_pkg_remover.scanner.Path.exists", return_value=True),
-            patch(
-                "unused_pkg_remover.scanner.Path.iterdir",
-                return_value=[mock_f1, mock_f2, mock_f3],
-            ),
-            patch("unused_pkg_remover.scanner.subprocess.run") as mock_run,
-        ):
-            mock_run.return_value.returncode = 0
-            mock_run.return_value.stdout = "pkg-a 1.0\n"
-            result = get_all_cache_packages()
-            assert len(result) == 2
-            names = [p["name"] for p in result]
-            assert "pkg-a-1.0-1-x86_64" in names
-            assert "pkg-b-2.0-1-any" in names
 
 
 class TestGetAurCachePackages:

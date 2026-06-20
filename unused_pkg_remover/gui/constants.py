@@ -2,7 +2,6 @@ import shutil
 from pathlib import Path
 
 from ..scanner import (
-    get_all_cache_packages,
     get_aur_build_deps,
     get_aur_cache_packages,
     get_broken_packages,
@@ -18,7 +17,6 @@ from ..scanner import (
 _SCAN_FUNCTIONS = {
     "orphans": get_unused_packages,
     "cache": lambda: (get_cache_packages(), 0),
-    "all-cache": lambda: (get_all_cache_packages(), 0),
     "flatpak": lambda: (get_unused_flatpaks(), 0),
     "broken": lambda: (get_broken_packages(), 0),
     "aur-dep": lambda: (get_aur_build_deps(), 0),
@@ -31,7 +29,6 @@ _SCAN_FUNCTIONS = {
 
 _REMOVAL_LABELS = {
     "cache": "Removing cached packages...",
-    "all-cache": "Removing cached package files...",
     "flatpak": "Removing Flatpak runtimes...",
     "aur-dep": "Cleaning AUR build deps...",
     "aur-cache": "Removing AUR build sources...",
@@ -44,7 +41,6 @@ _REMOVAL_LABELS = {
 _AVAILABLE_MODES: list[tuple[str, str]] = [
     ("orphans", "Orphans"),
     ("cache", "Pacman Cache"),
-    ("all-cache", "All Pacman Cache"),
 ]
 if shutil.which("flatpak"):
     _AVAILABLE_MODES.append(("flatpak", "Flatpak Runtimes"))

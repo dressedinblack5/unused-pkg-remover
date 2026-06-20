@@ -347,21 +347,6 @@ def get_aur_build_deps() -> list[dict]:
     return packages
 
 
-def get_all_cache_packages() -> list[dict]:
-    """Every cache file including installed versions (one row per file)."""
-    packages = [
-        {
-            "name": e["stem"],
-            "size": e["size"],
-            "desc": "installed" if e["installed"] else "not installed",
-            "type_tag": "cache",
-        }
-        for e in _iter_cache_entries()
-    ]
-    packages.sort(key=lambda x: x["size"], reverse=True)
-    return packages
-
-
 def get_aur_cache_packages() -> list[dict]:
     """Show cached AUR build sources from yay/paru."""
     packages = []

@@ -93,8 +93,6 @@ class RemovalWorker(QObject):
         self.progress.emit(_REMOVAL_LABELS.get(m, "Removing..."))
         if m == "cache":
             remove_cache_packages(self.names, cancel_check=lambda: self._cancelled)
-        elif m == "all-cache":
-            remove_cache_packages(self.names, exact=True, cancel_check=lambda: self._cancelled)
         elif m == "flatpak":
             remove_flatpak_packages(self.names)
         elif m == "aur-dep":

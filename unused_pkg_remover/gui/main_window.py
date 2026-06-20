@@ -265,7 +265,7 @@ class OrphanCleaner(QMainWindow):
         if self._scan_thread is not None:
             return
 
-        slow_modes = {"broken", "flatpak", "all-cache", "aur-cache"}
+        slow_modes = {"broken", "flatpak", "aur-cache"}
         show_progress = self._scan_mode in slow_modes
 
         if show_progress:
