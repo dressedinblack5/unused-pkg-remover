@@ -487,7 +487,7 @@ class TestGetCachePackages:
             assert result[0]["size"] == 300000
             assert result[0]["type_tag"] == "cache"
 
-    def test_filters_installed_packages(self):
+    def test_includes_installed_packages(self):
         p = MagicMock()
         p.name = "zstd-1.5.5-1-x86_64.pkg.tar.zst"
         p.is_file.return_value = True
@@ -503,7 +503,11 @@ class TestGetCachePackages:
             patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_pacman),
         ):
             result = get_cache_packages()
-            assert result == []
+            assert len(result) == 1
+            assert result[0]["name"] == "zstd"
+            assert result[0]["size"] == 500000
+            assert result[0]["type_tag"] == "cache"
+            assert "not installed" not in result[0]["desc"]
 
 
 class TestGetUnusedFlatpaks:

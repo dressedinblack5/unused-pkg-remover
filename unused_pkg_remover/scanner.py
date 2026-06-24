@@ -206,7 +206,7 @@ def _iter_cache_entries() -> list[dict]:
 
 
 def get_cache_packages() -> list[dict]:
-    """Cached packages not currently installed, grouped by package name."""
+    """All cached packages grouped by package name, including installed packages."""
     by_name: dict[str, list[dict]] = {}
     for e in _iter_cache_entries():
         by_name.setdefault(e["extracted"], []).append(e)
@@ -214,11 +214,11 @@ def get_cache_packages() -> list[dict]:
         {
             "name": name,
             "size": sum(e["size"] for e in entries),
-            "desc": f"{len(entries)} cached version(s), not installed",
+            "desc": f"{len(entries)} cached version(s)"
+            + (", not installed" if not entries[0]["installed"] else ""),
             "type_tag": "cache",
         }
         for name, entries in by_name.items()
-        if not entries[0]["installed"]
     ]
     packages.sort(key=lambda x: x["size"], reverse=True)
     return packages
