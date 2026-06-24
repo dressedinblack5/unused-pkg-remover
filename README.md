@@ -9,9 +9,9 @@ Flatpak runtimes, broken packages, AUR build deps, Steam/Proton junk, and more.
 
 ## Features
 
-- **11 scan modes**: Orphans, Pacman Cache, All Pacman Cache, AUR Cache, Flatpak
-  Runtimes, Broken Packages, Ollama Models, AUR Build Deps, Orphaned Proton
-  Prefixes, Obsolete Steam Runtimes, Stale Launcher Runners
+- **10 scan modes**: Orphans, Pacman Cache, AUR Cache, Flatpak Runtimes,
+  Broken Packages, Ollama Models, AUR Build Deps, Orphaned Proton Prefixes,
+  Obsolete Steam Runtimes, Stale Launcher Runners
 - **Safe removal** via `pkexec`, batch-chunked (50 max), progress dialog with cancel
 - **Safety nets**: built-in safe list (~100 critical packages), ignore files,
   dependency check via `pactree`, dry-run and force mode
@@ -29,16 +29,17 @@ Modes requiring unavailable tools are hidden automatically.
 ## Install
 
 ```bash
-# AUR (recommended)
-yay -S unused-pkg-remover
-# or
-paru -S unused-pkg-remover
-
-# PyPI / local
-pip install .
+curl -fsSL https://raw.githubusercontent.com/dressedinblack5/unused-pkg-remover/main/install.sh | sh
 ```
 
-Run: `unused-pkg-remover` or `python main.py`
+Requires Python 3.11+, PySide6, and Arch Linux (or derivative). PySide6 can be
+installed via pacman for fastest setup:
+
+```bash
+sudo pacman -S pyside6
+```
+
+Run: `unused-pkg-remover`
 
 ## Usage
 
