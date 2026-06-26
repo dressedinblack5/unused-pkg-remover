@@ -175,41 +175,6 @@ class TestRemoveAurDeps:
                 remove_aur_deps()
 
 
-class TestRemoveAllCachePackages:
-    def _mock_proc(self, returncode=0, stdout="", stderr=""):
-        proc = MagicMock()
-        proc.returncode = returncode
-        proc.communicate.return_value = (stdout, stderr)
-        return patch("unused_pkg_remover.services.subprocess.Popen", return_value=proc)
-
-    def test_removes_specific_files_by_key(self):
-        mock_f = MagicMock()
-        mock_f.exists.return_value = True
-        mock_f.__str__.return_value = "/var/cache/pacman/pkg/firefox-134.0-1-x86_64.pkg.tar.zst"
-
-        with (
-            patch("unused_pkg_remover.services.Path.__truediv__", return_value=mock_f),
-            self._mock_proc() as mock_popen,
-        ):
-            remove_cache_packages(["firefox-134.0-1-x86_64"], exact=True)
-            args = mock_popen.call_args[0][0]
-            assert "pkexec" in args
-            assert "rm" in args
-            assert "-f" in args
-            assert any("firefox-134.0-1-x86_64" in a for a in args)
-
-    def test_skips_when_no_files_found(self):
-        mock_f = MagicMock()
-        mock_f.exists.return_value = False
-
-        with (
-            patch("unused_pkg_remover.services.Path.__truediv__", return_value=mock_f),
-            self._mock_proc() as mock_popen,
-        ):
-            remove_cache_packages(["no-such-pkg"], exact=True)
-            mock_popen.assert_not_called()
-
-
 class TestRemoveAurCachePackages:
     def test_removes_aur_build_dirs(self):
         with tempfile.TemporaryDirectory() as tmp:

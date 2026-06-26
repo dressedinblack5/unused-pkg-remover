@@ -23,7 +23,14 @@ from PySide6.QtWidgets import (
 )
 
 from ..constants import format_size
-from ..services import BATCH_SIZE, HISTORY_FILE, RemovalError, add_to_ignore, log_removal
+from ..services import (
+    BATCH_SIZE,
+    HISTORY_FILE,
+    RemovalError,
+    add_to_ignore,
+    log_removal,
+    run_pkexec,
+)
 from .constants import (
     _AVAILABLE_MODES,
     _PROGRESS_STYLE,
@@ -922,9 +929,7 @@ class OrphanCleaner(QMainWindow):
         progress.show()
 
         try:
-            from ..services import _run_pkexec
-
-            _run_pkexec(["pkexec", "pacman", "-S", "--noconfirm"] + names)
+            run_pkexec(["pkexec", "pacman", "-S", "--noconfirm"] + names)
             progress.close()
             QMessageBox.information(
                 self, "Reinstall", f"Successfully reinstalled {len(names)} packages."

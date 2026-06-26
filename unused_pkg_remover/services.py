@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from .constants import _CACHE_EXTS, format_size
+from .constants import format_size
 
 RemovalError = RuntimeError
 
@@ -17,7 +17,7 @@ HISTORY_FILE = HISTORY_DIR / "history.log"
 BATCH_SIZE = 50
 
 
-def _run_pkexec(
+def run_pkexec(
     cmd: list[str],
     *,
     cancel_check: Callable | None = None,
@@ -57,7 +57,7 @@ def remove_packages_batch(
     names: list[str], force: bool = False, cancel_check: Callable | None = None
 ) -> None:
     base = ["pkexec", "pacman", "-Rns", "--nodeps"] if force else ["pkexec", "pacman", "-Rns"]
-    _run_pkexec(base + ["--noconfirm"] + names, cancel_check=cancel_check)
+    run_pkexec(base + ["--noconfirm"] + names, cancel_check=cancel_check)
 
 
 def log_removal(packages: list[dict]) -> None:
@@ -77,29 +77,22 @@ def add_to_ignore(ignore_file_path: Path, package_names: list[str]) -> None:
             f.write(f"{name}\n")
 
 
-def remove_cache_packages(
-    names: list[str], *, exact: bool = False, cancel_check: Callable | None = None
-) -> None:
+def remove_cache_packages(names: list[str], *, cancel_check: Callable | None = None) -> None:
     cache_dir = Path("/var/cache/pacman/pkg")
     files = []
     for name in names:
-        if exact:
-            for ext in _CACHE_EXTS:
-                p = cache_dir / f"{name}{ext}"
-                if p.exists():
-                    files.append(str(p))
-                    break
-        else:
-            pattern = re.compile(rf"^{re.escape(name)}-\d")
-            for f in cache_dir.iterdir():
-                if pattern.match(f.name):
-                    files.append(str(f))
+        pattern = re.compile(rf"^{re.escape(name)}-\d")
+        for f in cache_dir.iterdir():
+            if pattern.match(f.name):
+                files.append(str(f))
     if not files:
         return
-    _run_pkexec(["pkexec", "rm", "-f"] + files, cancel_check=cancel_check)
+    run_pkexec(["pkexec", "rm", "-f"] + files, cancel_check=cancel_check)
 
 
-def remove_flatpak_packages(names: list[str]) -> None:
+def remove_flatpak_packages(names: list[str], *, cancel_check: Callable | None = None) -> None:
+    if cancel_check and cancel_check():
+        raise RemovalError("Cancelled")
     try:
         subprocess.run(
             ["flatpak", "uninstall", "-y"] + names,
@@ -111,7 +104,9 @@ def remove_flatpak_packages(names: list[str]) -> None:
         raise RemovalError(e.stderr or str(e)) from e
 
 
-def remove_aur_deps() -> None:
+def remove_aur_deps(*, cancel_check: Callable | None = None) -> None:
+    if cancel_check and cancel_check():
+        raise RemovalError("Cancelled")
     if shutil.which("yay"):
         cmd = ["yay", "-Yc", "--noconfirm"]
     elif shutil.which("paru"):
@@ -168,8 +163,9 @@ def remove_obsolete_steam_runtimes(names: list[str]) -> None:
         raise RemovalError("; ".join(errors))
 
 
-def remove_ollama_models(names: list[str]) -> None:
-    """Remove Ollama models via `ollama rm`."""
+def remove_ollama_models(names: list[str], *, cancel_check: Callable | None = None) -> None:
+    if cancel_check and cancel_check():
+        raise RemovalError("Cancelled")
     try:
         subprocess.run(
             ["ollama", "rm"] + names,

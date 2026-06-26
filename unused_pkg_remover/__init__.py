@@ -6,4 +6,5 @@ from .services import (
     add_to_ignore,
     log_removal,
     remove_packages_batch,
+    run_pkexec,
 )

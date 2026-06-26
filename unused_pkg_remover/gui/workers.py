@@ -94,9 +94,9 @@ class RemovalWorker(QObject):
         if m == "cache":
             remove_cache_packages(self.names, cancel_check=lambda: self._cancelled)
         elif m == "flatpak":
-            remove_flatpak_packages(self.names)
+            remove_flatpak_packages(self.names, cancel_check=lambda: self._cancelled)
         elif m == "aur-dep":
-            remove_aur_deps()
+            remove_aur_deps(cancel_check=lambda: self._cancelled)
         elif m == "aur-cache":
             remove_aur_cache_packages(self.names)
         elif m == "proton-prefix":
@@ -104,7 +104,7 @@ class RemovalWorker(QObject):
         elif m == "steam-runtime":
             remove_obsolete_steam_runtimes(self.names)
         elif m == "ollama":
-            remove_ollama_models(self.names)
+            remove_ollama_models(self.names, cancel_check=lambda: self._cancelled)
         elif m == "launcher-runner":
             remove_stale_launcher_runners(self.names)
 
