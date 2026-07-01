@@ -1,3 +1,5 @@
+import typing
+
 from PySide6.QtCore import QSettings, Qt, QThread, QTimer
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -17,7 +19,6 @@ from PySide6.QtWidgets import (
     QProgressDialog,
     QPushButton,
     QStatusBar,
-    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -181,7 +182,7 @@ class OrphanCleaner(QMainWindow):
         self.table.setColumnWidth(COL_TYPE, 60)
         hdr.setSectionResizeMode(COL_DESC, QHeaderView.Stretch)
         self.table.verticalHeader().setDefaultSectionSize(26)
-        
+
         # Header checkbox for Select All
         self.header_checkbox = QCheckBox()
         self.header_checkbox.setFixedSize(24, 24)
@@ -207,7 +208,7 @@ class OrphanCleaner(QMainWindow):
         """)
         self.header_checkbox.clicked.connect(self._toggle_all_visible)
         self.header_checkbox.setParent(hdr)
-        
+
         layout.addWidget(self.table)
 
         self._select_all_row = None
@@ -261,7 +262,7 @@ class OrphanCleaner(QMainWindow):
 
         self.table.itemChanged.connect(self._on_item_changed)
 
-
+    @typing.override
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._update_header_checkbox_position()
@@ -477,7 +478,7 @@ class OrphanCleaner(QMainWindow):
         chips = []
         if self.search.text():
             chips.append(f"Search: {self.search.text()}")
-        
+
         for chip_text in chips:
             chip = QLabel(chip_text)
             chip.setStyleSheet("""
@@ -525,7 +526,7 @@ class OrphanCleaner(QMainWindow):
     def _toggle_all_visible(self, checked: bool = None):
         if checked is None:
             checked = self.header_checkbox.isChecked()
-        
+
         self.table.blockSignals(True)
         for row in range(0, self.table.rowCount()):
             if not self.table.isRowHidden(row):
@@ -548,7 +549,7 @@ class OrphanCleaner(QMainWindow):
                 item = self.table.item(row, COL_SELECT)
                 if item and item.checkState() == Qt.Checked:
                     checked_data += 1
-        
+
         if visible_data == 0 or checked_data == 0:
             self.header_checkbox.setCheckState(Qt.Unchecked)
         elif checked_data == visible_data:
