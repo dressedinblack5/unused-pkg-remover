@@ -1,5 +1,3 @@
-import typing
-
 from PySide6.QtCore import QSettings, Qt, QThread, QTimer
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -24,6 +22,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from typing_extensions import override
 
 from ..constants import format_size
 from ..services import (
@@ -262,7 +261,7 @@ class OrphanCleaner(QMainWindow):
 
         self.table.itemChanged.connect(self._on_item_changed)
 
-    @typing.override
+    @override
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._update_header_checkbox_position()
