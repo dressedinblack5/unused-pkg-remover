@@ -3,6 +3,7 @@ from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
     QProgressDialog,
     QPushButton,
     QStatusBar,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -104,9 +106,6 @@ class OrphanCleaner(QMainWindow):
 
         mode_row = QHBoxLayout()
         mode_row.setSpacing(8)
-        mode_label = QLabel("Scan mode:")
-        mode_label.setStyleSheet("color: #9e9e9e; font-size: 13px;")
-        mode_row.addWidget(mode_label)
         self.mode_combo = QComboBox()
         self._mode_keys = [k for k, _ in _AVAILABLE_MODES]
         for _, label in _AVAILABLE_MODES:
@@ -156,8 +155,12 @@ class OrphanCleaner(QMainWindow):
             }
         """)
         search_row.addWidget(self.search, 1)
-
         layout.addLayout(search_row)
+
+        self.filter_chips_layout = QHBoxLayout()
+        self.filter_chips_layout.setSpacing(5)
+        self.filter_chips_layout.setAlignment(Qt.AlignLeft)
+        layout.addLayout(self.filter_chips_layout)
 
         self.table = QTableWidget()
         self.table.setColumnCount(5)
@@ -178,6 +181,33 @@ class OrphanCleaner(QMainWindow):
         self.table.setColumnWidth(COL_TYPE, 60)
         hdr.setSectionResizeMode(COL_DESC, QHeaderView.Stretch)
         self.table.verticalHeader().setDefaultSectionSize(26)
+        
+        # Header checkbox for Select All
+        self.header_checkbox = QCheckBox()
+        self.header_checkbox.setFixedSize(24, 24)
+        self.header_checkbox.setCursor(Qt.ArrowCursor)
+        self.header_checkbox.setStyleSheet("""
+            QCheckBox {
+                background: transparent;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+                border: 1px solid #5a5a5a;
+                border-radius: 3px;
+                background-color: #2d2d2d;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #264f78;
+                border-color: #58a6ff;
+            }
+            QCheckBox::indicator:unchecked {
+                background-color: #2d2d2d;
+            }
+        """)
+        self.header_checkbox.clicked.connect(self._toggle_all_visible)
+        self.header_checkbox.setParent(hdr)
+        
         layout.addWidget(self.table)
 
         self._select_all_row = None
@@ -231,6 +261,17 @@ class OrphanCleaner(QMainWindow):
 
         self.table.itemChanged.connect(self._on_item_changed)
 
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_header_checkbox_position()
+
+    def _update_header_checkbox_position(self):
+        hdr = self.table.horizontalHeader()
+        x = (hdr.sectionSize(0) - self.header_checkbox.width()) // 2
+        y = (hdr.height() - self.header_checkbox.height()) // 2
+        self.header_checkbox.move(x, y)
+
     def _load_settings(self):
         s = QSettings("unused-pkg-remover", "unused-pkg-remover")
         geo = s.value("geometry")
@@ -266,6 +307,7 @@ class OrphanCleaner(QMainWindow):
     def _on_mode_changed(self, index: int) -> None:
         self._scan_mode = self._mode_keys[index]
         self.btn_ignore.setVisible(self._scan_mode == "orphans")
+        self._update_filter_chips()
         self._load_packages()
 
     def _do_load_packages(self):
@@ -311,9 +353,8 @@ class OrphanCleaner(QMainWindow):
             self._scan_progress.close()
         self.packages = packages
 
-        row_count = len(self.packages) + 1
+        row_count = len(self.packages)
         self.table.setRowCount(row_count)
-        self._select_all_row = 0
 
         type_colors = {
             "AUR": "#ff7b72",
@@ -329,24 +370,8 @@ class OrphanCleaner(QMainWindow):
             "launcher-runner": "#ffab70",
         }
 
-        chk = QTableWidgetItem()
-        chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-        chk.setCheckState(Qt.Unchecked)
-        chk.setData(Qt.UserRole, -1)
-        self.table.setItem(0, COL_SELECT, chk)
-
-        name_item = QTableWidgetItem("Select All")
-        font = name_item.font()
-        font.setBold(True)
-        name_item.setFont(font)
-        self.table.setItem(0, COL_NAME, name_item)
-
-        desc_item = QTableWidgetItem("Check / uncheck all visible packages")
-        desc_item.setToolTip("Check or uncheck all packages in the list")
-        self.table.setItem(0, COL_DESC, desc_item)
-
         for i, pkg in enumerate(self.packages):
-            row = i + 1
+            row = i
             chk = QTableWidgetItem()
             chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             chk.setCheckState(Qt.Unchecked)
@@ -414,16 +439,6 @@ class OrphanCleaner(QMainWindow):
 
     def _on_item_changed(self, item):
         if item.column() == COL_SELECT:
-            role = item.data(Qt.UserRole)
-            if role == -1:
-                checked = item.checkState() == Qt.Checked
-                self.table.blockSignals(True)
-                for row in range(1, self.table.rowCount()):
-                    if not self.table.isRowHidden(row):
-                        chk = self.table.item(row, COL_SELECT)
-                        if chk:
-                            chk.setCheckState(Qt.Checked if checked else Qt.Unchecked)
-                self.table.blockSignals(False)
             self._update_buttons()
 
     def _update_buttons(self):
@@ -453,13 +468,35 @@ class OrphanCleaner(QMainWindow):
             parts.append(f"{filtered} excluded")
         self.status_bar.showMessage(" \u00b7 ".join(parts))
 
+    def _update_filter_chips(self):
+        while self.filter_chips_layout.count():
+            item = self.filter_chips_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        chips = []
+        if self.search.text():
+            chips.append(f"Search: {self.search.text()}")
+        
+        for chip_text in chips:
+            chip = QLabel(chip_text)
+            chip.setStyleSheet("""
+                background-color: #3d3d3d;
+                color: #e0e0e0;
+                border: 1px solid #58a6ff;
+                border-radius: 10px;
+                padding: 2px 8px;
+                font-size: 11px;
+            """)
+            self.filter_chips_layout.addWidget(chip)
+
     def _filter_packages(self, text):
-        for row in range(1, self.table.rowCount()):
+        self._update_filter_chips()
+        for row in range(0, self.table.rowCount()):
             item = self.table.item(row, COL_NAME)
             if item:
                 visible = text.lower() in item.text().lower() if text else True
                 self.table.setRowHidden(row, not visible)
-        self.table.setRowHidden(0, False)
         visible_count = sum(
             1 for row in range(self.table.rowCount()) if not self.table.isRowHidden(row)
         )
@@ -472,27 +509,31 @@ class OrphanCleaner(QMainWindow):
 
     def _deselect_all(self):
         self.table.blockSignals(True)
-        for row in range(1, self.table.rowCount()):
+        for row in range(0, self.table.rowCount()):
             item = self.table.item(row, COL_SELECT)
             if item:
                 item.setCheckState(Qt.Unchecked)
         self.table.blockSignals(False)
         self._update_buttons()
 
-    def _select_all_visible(self):
-        self.table.blockSignals(True)
-        for row in range(1, self.table.rowCount()):
-            if not self.table.isRowHidden(row):
-                item = self.table.item(row, COL_SELECT)
-                if item:
-                    item.setCheckState(Qt.Checked)
-        self.table.blockSignals(False)
-        self._update_buttons()
-
     def _on_select_all(self):
         if self.search.hasFocus():
             return
-        self._select_all_visible()
+        self.header_checkbox.setChecked(True)
+        self._toggle_all_visible(True)
+
+    def _toggle_all_visible(self, checked: bool = None):
+        if checked is None:
+            checked = self.header_checkbox.isChecked()
+        
+        self.table.blockSignals(True)
+        for row in range(0, self.table.rowCount()):
+            if not self.table.isRowHidden(row):
+                item = self.table.item(row, COL_SELECT)
+                if item:
+                    item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+        self.table.blockSignals(False)
+        self._update_buttons()
 
     def _on_escape(self):
         if self.search.text():
@@ -501,26 +542,23 @@ class OrphanCleaner(QMainWindow):
     def _update_checkbox_state(self):
         visible_data = 0
         checked_data = 0
-        for row in range(1, self.table.rowCount()):
+        for row in range(0, self.table.rowCount()):
             if not self.table.isRowHidden(row):
                 visible_data += 1
                 item = self.table.item(row, COL_SELECT)
                 if item and item.checkState() == Qt.Checked:
                     checked_data += 1
-        sel_item = self.table.item(0, COL_SELECT)
-        if sel_item is not None:
-            self.table.blockSignals(True)
-            if visible_data == 0 or checked_data == 0:
-                sel_item.setCheckState(Qt.Unchecked)
-            elif checked_data == visible_data:
-                sel_item.setCheckState(Qt.Checked)
-            else:
-                sel_item.setCheckState(Qt.PartiallyChecked)
-            self.table.blockSignals(False)
+        
+        if visible_data == 0 or checked_data == 0:
+            self.header_checkbox.setCheckState(Qt.Unchecked)
+        elif checked_data == visible_data:
+            self.header_checkbox.setCheckState(Qt.Checked)
+        else:
+            self.header_checkbox.setCheckState(Qt.PartiallyChecked)
 
     def _checked_count(self):
         c = 0
-        for row in range(1, self.table.rowCount()):
+        for row in range(0, self.table.rowCount()):
             item = self.table.item(row, COL_SELECT)
             if item and item.checkState() == Qt.Checked:
                 c += 1
@@ -528,7 +566,7 @@ class OrphanCleaner(QMainWindow):
 
     def _checked_indices(self):
         idxs = []
-        for row in range(1, self.table.rowCount()):
+        for row in range(0, self.table.rowCount()):
             item = self.table.item(row, COL_SELECT)
             if item and item.checkState() == Qt.Checked:
                 idx = item.data(Qt.UserRole)
