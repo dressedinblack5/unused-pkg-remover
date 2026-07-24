@@ -516,26 +516,34 @@ class TestGetUnusedFlatpaks:
             assert get_unused_flatpaks() == []
 
     def test_raises_on_nonzero_exit(self):
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stderr = "flatpak daemon not running"
+        mock_main = MagicMock()
+        mock_main.returncode = 1
+        mock_main.stderr = "flatpak daemon not running"
+
         with (
             patch("unused_pkg_remover.scanner.shutil.which", return_value="/usr/bin/flatpak"),
-            patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_result),
+            patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_main),
         ):
             with pytest.raises(RuntimeError, match="flatpak daemon not running"):
                 get_unused_flatpaks()
 
-    def test_raises_with_fallback_on_nonzero_exit_no_stderr(self):
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stderr = ""
+    def test_returns_empty_on_fallback_nonzero_exit_with_no_stderr(self):
+        mock_list = MagicMock()
+        mock_list.returncode = 1
+        mock_list.stderr = "Unknown option --unused"
+
+        mock_uninstall = MagicMock()
+        mock_uninstall.returncode = 1
+        mock_uninstall.stderr = ""
+
         with (
             patch("unused_pkg_remover.scanner.shutil.which", return_value="/usr/bin/flatpak"),
-            patch("unused_pkg_remover.scanner.subprocess.run", return_value=mock_result),
+            patch(
+                "unused_pkg_remover.scanner.subprocess.run",
+                side_effect=[mock_list, mock_uninstall],
+            ),
         ):
-            with pytest.raises(RuntimeError, match="exited with code"):
-                get_unused_flatpaks()
+            assert get_unused_flatpaks() == []
 
 
 class TestGetBrokenPackages:
