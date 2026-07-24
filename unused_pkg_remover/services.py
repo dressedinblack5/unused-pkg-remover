@@ -1,4 +1,5 @@
 """Service layer handling system commands and file operations for the remover."""
+
 import os
 import re
 import shutil

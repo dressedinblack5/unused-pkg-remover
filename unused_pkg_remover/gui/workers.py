@@ -1,4 +1,5 @@
 """Worker classes for scan, dependency checking, and removal operations in the GUI."""
+
 from PySide6.QtCore import QObject, Signal
 
 from ..scanner import get_dependents
@@ -21,6 +22,7 @@ from .constants import _REMOVAL_LABELS, _SCAN_FUNCTIONS
 
 class ScanWorker(QObject):
     """Worker for scanning packages based on selected mode."""
+
     finished = Signal(object, int)
     error = Signal(str)
     cancelled = Signal()
@@ -50,6 +52,7 @@ class ScanWorker(QObject):
 
 class DependentsWorker(QObject):
     """Worker for checking package dependents before removal."""
+
     finished = Signal(dict)
     error = Signal(str)
 
@@ -78,6 +81,7 @@ class DependentsWorker(QObject):
 
 class RemovalWorker(QObject):
     """Worker for removing packages, handling batch removal and progress reporting."""
+
     progress = Signal(str)
     finished = Signal(bool, str)
 

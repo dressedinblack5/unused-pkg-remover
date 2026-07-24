@@ -1,4 +1,5 @@
 """Top-level package for unused-pkg-remover."""
+
 from .main import main
 from .scanner import get_dependents, get_unused_packages
 from .services import (

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Entry point script for unused-pkg-remover CLI."""
+
 import argparse
 import os
 import sys

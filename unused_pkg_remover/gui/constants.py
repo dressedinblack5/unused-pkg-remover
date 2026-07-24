@@ -62,9 +62,7 @@ if has_aur_helper:
 _home = Path.home()
 if shutil.which("npm"):
     _AVAILABLE_MODES.append(("npm-cache", "NPM Cache"))
-    if any(
-        _home.joinpath(p).exists() for p in ["Projects", "dev", "src", "workspace", "code"]
-    ):
+    if any(_home.joinpath(p).exists() for p in ["Projects", "dev", "src", "workspace", "code"]):
         _AVAILABLE_MODES.append(("npm-stale", "NPM Stale Modules"))
 
 _steam_dir = _home / ".steam" / "steam"
@@ -86,6 +84,7 @@ if any(
     ]
 ):
     _AVAILABLE_MODES.append(("launcher-runner", "Launcher Runners"))
+
 
 def get_ignore_file() -> Path:
     return Path.cwd() / ".unused-ignore"

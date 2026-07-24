@@ -1,4 +1,5 @@
 """Theme utilities for applying dark theme and size-based coloring."""
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QStyleFactory, QTableWidgetItem
@@ -14,6 +15,7 @@ def size_color(size: int) -> QColor:
 
 class NumericTableItem(QTableWidgetItem):
     """Table widget item that sorts numerically based on stored integer size."""
+
     def __lt__(self, other):
         if other is None:
             return False
