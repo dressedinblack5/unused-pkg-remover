@@ -1,3 +1,5 @@
+"""Utility constants and formatting functions for the package remover."""
+
 _CACHE_EXTS = (".pkg.tar.zst", ".pkg.tar.xz", ".pkg.tar.gz", ".pkg.tar.bz2")
 _CACHE_ARCHES = (
     "-x86_64",

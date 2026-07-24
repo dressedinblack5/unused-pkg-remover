@@ -1,3 +1,4 @@
+"""GUI package initialization for unused-pkg-remover."""
 import sys
 
 from PySide6.QtWidgets import QApplication

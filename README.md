@@ -5,13 +5,19 @@
 </p>
 
 PySide6 GUI for reclaiming disk space on Arch Linux — orphans, pacman cache,
-Flatpak runtimes, broken packages, AUR build deps, Steam/Proton junk, and more.
+Flatpak runtimes, broken packages, AUR build deps, Steam/Proton junk,
+NPM cache/stale modules, and more.
 
 ## Features
 
-- **10 scan modes**: Orphans, Pacman Cache, AUR Cache, Flatpak Runtimes,
+- **12 scan modes**: Orphans, Pacman Cache, AUR Cache, Flatpak Runtimes,
   Broken Packages, Ollama Models, AUR Build Deps, Orphaned Proton Prefixes,
-  Obsolete Steam Runtimes, Stale Launcher Runners
+  Obsolete Steam Runtimes, Stale Launcher Runners, NPM Cache, Stale node_modules
+- **Multi-Steam-library support**: Scans all Steam library folders via
+  `libraryfolders.vdf` for Proton prefixes and runtimes, not just the default
+- **Flatpak**: Uses `flatpak list --unused` (with fallback for older flatpak)
+- **AUR Cache**: Handles both yay (`~/.cache/yay`) and paru (`~/.cache/paru/clone/`)
+- **Launcher runners**: Scans Lutris, Heroic, Bottles — both native and Flatpak installs
 - **Safe removal** via `pkexec`, batch-chunked (50 max), progress dialog with cancel
 - **Safety nets**: built-in safe list (~100 critical packages), ignore files,
   dependency check via `pactree`, dry-run and force mode
@@ -24,7 +30,7 @@ Modes requiring unavailable tools are hidden automatically.
 
 - Python 3.11+, PySide6 >= 6.5, Arch Linux (or derivative)
 - `pacman`, `expac`, `pkexec`
-- Optional: `flatpak`, `ollama`, `yay`/`paru`, `steam`, `lutris`, `heroic`, `bottles`
+- Optional: `flatpak`, `ollama`, `yay`/`paru`, `steam`, `lutris`, `heroic`, `bottles`, `npm`
 
 ## Install
 
