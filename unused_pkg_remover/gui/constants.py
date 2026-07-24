@@ -1,3 +1,5 @@
+"""GUI constants for scan modes, removal labels, and UI settings."""
+
 import shutil
 from pathlib import Path
 
@@ -6,10 +8,12 @@ from ..scanner import (
     get_aur_cache_packages,
     get_broken_packages,
     get_cache_packages,
+    get_npm_cache_packages,
     get_obsolete_steam_runtimes,
     get_ollama_models,
     get_orphaned_proton_prefixes,
     get_stale_launcher_runners,
+    get_stale_node_modules,
     get_unused_flatpaks,
     get_unused_packages,
 )
@@ -25,17 +29,21 @@ _SCAN_FUNCTIONS = {
     "steam-runtime": lambda: (get_obsolete_steam_runtimes(), 0),
     "ollama": lambda: (get_ollama_models(), 0),
     "launcher-runner": lambda: (get_stale_launcher_runners(), 0),
+    "npm-cache": lambda: (get_npm_cache_packages(), 0),
+    "npm-stale": lambda: (get_stale_node_modules(), 0),
 }
 
 _REMOVAL_LABELS = {
     "cache": "Removing cached packages...",
     "flatpak": "Removing Flatpak runtimes...",
-    "aur-dep": "Cleaning AUR build deps...",
+    "aur-dep": "Removing AUR build deps...",
     "aur-cache": "Removing AUR build sources...",
     "proton-prefix": "Removing Proton prefixes...",
     "steam-runtime": "Removing Steam runtimes...",
     "ollama": "Removing Ollama models...",
     "launcher-runner": "Removing launcher runners...",
+    "npm-cache": "Removing npm cache...",
+    "npm-stale": "Removing stale NPM modules...",
 }
 
 _AVAILABLE_MODES: list[tuple[str, str]] = [
@@ -52,16 +60,32 @@ if has_aur_helper:
     _AVAILABLE_MODES.append(("aur-dep", "AUR Build Deps"))
     _AVAILABLE_MODES.append(("aur-cache", "AUR Build Cache"))
 _home = Path.home()
-if _home.joinpath(".steam/steam/steamapps/compatdata").exists():
+if shutil.which("npm"):
+    _AVAILABLE_MODES.append(("npm-cache", "NPM Cache"))
+    if any(
+        _home.joinpath(p).exists() for p in ["Projects", "dev", "src", "workspace", "code"]
+    ):
+        _AVAILABLE_MODES.append(("npm-stale", "NPM Stale Modules"))
+
+_steam_dir = _home / ".steam" / "steam"
+_vdf_path = _steam_dir / "steamapps" / "libraryfolders.vdf"
+_has_steam = _steam_dir.exists()
+if _has_steam and (_steam_dir.joinpath("steamapps/compatdata").exists() or _vdf_path.exists()):
     _AVAILABLE_MODES.append(("proton-prefix", "Proton Prefixes"))
-if _home.joinpath(".steam/steam/steamapps/common").exists():
+if _has_steam and (_steam_dir.joinpath("steamapps/common").exists() or _vdf_path.exists()):
     _AVAILABLE_MODES.append(("steam-runtime", "Steam Runtimes"))
 if any(
     _home.joinpath(p).exists()
-    for p in [".local/share/lutris/runners", ".config/heroic", ".local/share/bottles/runners"]
+    for p in [
+        ".local/share/lutris/runners",
+        ".config/heroic",
+        ".local/share/bottles/runners",
+        ".var/app/net.lutris.Lutris/data/lutris/runners",
+        ".var/app/com.heroicgameslauncher.hgl/config/heroic",
+        ".var/app/com.usebottles.bottles/data/bottles/runners",
+    ]
 ):
     _AVAILABLE_MODES.append(("launcher-runner", "Launcher Runners"))
-
 
 def get_ignore_file() -> Path:
     return Path.cwd() / ".unused-ignore"

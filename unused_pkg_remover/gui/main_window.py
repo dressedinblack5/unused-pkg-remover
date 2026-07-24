@@ -48,6 +48,8 @@ from .workers import DependentsWorker, RemovalWorker, ScanWorker
 
 
 class OrphanCleaner(QMainWindow):
+    """Main window for scanning and removing unused packages."""
+
     def __init__(self, dry_run: bool = False, force_remove: bool = False) -> None:
         super().__init__()
         self.packages = []
@@ -79,7 +81,7 @@ class OrphanCleaner(QMainWindow):
         self._load_settings()
         QTimer.singleShot(0, self._load_packages)
 
-    def _setup_ui(self):
+    def _setup_ui(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
@@ -106,6 +108,9 @@ class OrphanCleaner(QMainWindow):
 
         mode_row = QHBoxLayout()
         mode_row.setSpacing(8)
+        mode_label = QLabel("Scan Mode:")
+        mode_label.setStyleSheet("color: #a0a0a0; font-size: 13px;")
+        mode_row.addWidget(mode_label)
         self.mode_combo = QComboBox()
         self._mode_keys = [k for k, _ in _AVAILABLE_MODES]
         for _, label in _AVAILABLE_MODES:
@@ -266,19 +271,19 @@ class OrphanCleaner(QMainWindow):
         super().resizeEvent(event)
         self._update_header_checkbox_position()
 
-    def _update_header_checkbox_position(self):
+    def _update_header_checkbox_position(self) -> None:
         hdr = self.table.horizontalHeader()
         x = (hdr.sectionSize(0) - self.header_checkbox.width()) // 2
         y = (hdr.height() - self.header_checkbox.height()) // 2
         self.header_checkbox.move(x, y)
 
-    def _load_settings(self):
+    def _load_settings(self) -> None:
         s = QSettings("unused-pkg-remover", "unused-pkg-remover")
         geo = s.value("geometry")
         if geo:
             self.restoreGeometry(geo)
 
-    def _save_settings(self):
+    def _save_settings(self) -> None:
         s = QSettings("unused-pkg-remover", "unused-pkg-remover")
         s.setValue("geometry", self.saveGeometry())
 
@@ -291,7 +296,7 @@ class OrphanCleaner(QMainWindow):
         self._save_settings()
         event.accept()
 
-    def _load_packages(self):
+    def _load_packages(self) -> None:
         if self._removal_running or self._loading:
             return
         self._load_gen += 1
@@ -310,7 +315,7 @@ class OrphanCleaner(QMainWindow):
         self._update_filter_chips()
         self._load_packages()
 
-    def _do_load_packages(self):
+    def _do_load_packages(self) -> None:
         if self._scan_thread is not None:
             return
 
@@ -368,6 +373,8 @@ class OrphanCleaner(QMainWindow):
             "steam-runtime": "#d2a8ff",
             "ollama": "#79c0ff",
             "launcher-runner": "#ffab70",
+            "npm-cache": "#d2a8ff",
+            "npm-stale": "#ff7b72",
         }
 
         for i, pkg in enumerate(self.packages):
@@ -427,7 +434,7 @@ class OrphanCleaner(QMainWindow):
     def _cleanup_scan_thread(self) -> None:
         self._cleanup_qthread("_scan_thread", "_scan_worker")
 
-    def _finish_load(self, filtered):
+    def _finish_load(self, filtered) -> None:
         self._loading = False
         self.table.setGraphicsEffect(None)
         self.table.setEnabled(True)
@@ -437,11 +444,11 @@ class OrphanCleaner(QMainWindow):
         if self.search.text():
             self._filter_packages(self.search.text())
 
-    def _on_item_changed(self, item):
+    def _on_item_changed(self, item) -> None:
         if item.column() == COL_SELECT:
             self._update_buttons()
 
-    def _update_buttons(self):
+    def _update_buttons(self) -> None:
         count = self._checked_count()
         self.btn_remove.setEnabled(count > 0)
         if count:
@@ -457,7 +464,7 @@ class OrphanCleaner(QMainWindow):
     def _checked_size(self) -> int:
         return sum(p["size"] for p in self._checked_packages())
 
-    def _update_status_bar(self, filtered=None):
+    def _update_status_bar(self, filtered=None) -> None:
         if filtered is None:
             filtered = self._last_filtered
         total_size = sum(p["size"] for p in self.packages)
@@ -468,7 +475,7 @@ class OrphanCleaner(QMainWindow):
             parts.append(f"{filtered} excluded")
         self.status_bar.showMessage(" \u00b7 ".join(parts))
 
-    def _update_filter_chips(self):
+    def _update_filter_chips(self) -> None:
         while self.filter_chips_layout.count():
             item = self.filter_chips_layout.takeAt(0)
             if item.widget():
@@ -490,7 +497,7 @@ class OrphanCleaner(QMainWindow):
             """)
             self.filter_chips_layout.addWidget(chip)
 
-    def _filter_packages(self, text):
+    def _filter_packages(self, text) -> None:
         self._update_filter_chips()
         for row in range(0, self.table.rowCount()):
             item = self.table.item(row, COL_NAME)
@@ -507,7 +514,7 @@ class OrphanCleaner(QMainWindow):
             self._update_status_bar()
         self._update_checkbox_state()
 
-    def _deselect_all(self):
+    def _deselect_all(self) -> None:
         self.table.blockSignals(True)
         for row in range(0, self.table.rowCount()):
             item = self.table.item(row, COL_SELECT)
@@ -516,13 +523,13 @@ class OrphanCleaner(QMainWindow):
         self.table.blockSignals(False)
         self._update_buttons()
 
-    def _on_select_all(self):
+    def _on_select_all(self) -> None:
         if self.search.hasFocus():
             return
         self.header_checkbox.setChecked(True)
         self._toggle_all_visible(True)
 
-    def _toggle_all_visible(self, checked: bool = None):
+    def _toggle_all_visible(self, checked: bool = None) -> None:
         if checked is None:
             checked = self.header_checkbox.isChecked()
 
@@ -535,11 +542,11 @@ class OrphanCleaner(QMainWindow):
         self.table.blockSignals(False)
         self._update_buttons()
 
-    def _on_escape(self):
+    def _on_escape(self) -> None:
         if self.search.text():
             self.search.clear()
 
-    def _update_checkbox_state(self):
+    def _update_checkbox_state(self) -> None:
         visible_data = 0
         checked_data = 0
         for row in range(0, self.table.rowCount()):
@@ -556,7 +563,7 @@ class OrphanCleaner(QMainWindow):
         else:
             self.header_checkbox.setCheckState(Qt.PartiallyChecked)
 
-    def _checked_count(self):
+    def _checked_count(self) -> int:
         c = 0
         for row in range(0, self.table.rowCount()):
             item = self.table.item(row, COL_SELECT)
@@ -564,7 +571,7 @@ class OrphanCleaner(QMainWindow):
                 c += 1
         return c
 
-    def _checked_indices(self):
+    def _checked_indices(self) -> list[int]:
         idxs = []
         for row in range(0, self.table.rowCount()):
             item = self.table.item(row, COL_SELECT)
@@ -574,7 +581,7 @@ class OrphanCleaner(QMainWindow):
                     idxs.append(idx)
         return idxs
 
-    def _checked_packages(self):
+    def _checked_packages(self) -> list[dict]:
         return [self.packages[i] for i in self._checked_indices()]
 
     def _show_removal_details(
@@ -641,7 +648,7 @@ class OrphanCleaner(QMainWindow):
 
         return dialog.exec() == QDialog.Accepted
 
-    def _remove_selected(self):
+    def _remove_selected(self) -> None:
         if self._removal_running:
             return
         pkgs = self._checked_packages()
@@ -735,13 +742,13 @@ class OrphanCleaner(QMainWindow):
         self._removal_worker.finished.connect(self._on_removal_finished)
         self._removal_thread.start()
 
-    def _proceed_with_removal(self, pkgs, sel_size, dep_warning):
+    def _proceed_with_removal(self, pkgs, sel_size, dep_warning) -> None:
         if not self._show_removal_details(pkgs, sel_size, dep_warning):
             return
         self._removal_pkgs = pkgs
         self._start_removal_thread([p["name"] for p in pkgs], f"Removing {len(pkgs)} packages...")
 
-    def _on_removal_finished(self, success, error_msg):
+    def _on_removal_finished(self, success, error_msg) -> None:
         self._progress.close()
         self.setEnabled(True)
 
@@ -778,10 +785,10 @@ class OrphanCleaner(QMainWindow):
             self._removal_running = False
             self._force_attempted = False
 
-    def _cleanup_thread(self):
+    def _cleanup_thread(self) -> None:
         self._cleanup_qthread("_removal_thread", "_removal_worker")
 
-    def _handle_dep_conflict(self, error_msg):
+    def _handle_dep_conflict(self, error_msg) -> None:
         dep_lines = []
         removed = {p["name"] for p in self._removal_pkgs}
         involved = set()
@@ -818,12 +825,12 @@ class OrphanCleaner(QMainWindow):
             self._removal_running = False
             self._force_attempted = False
 
-    def _cancel_removal(self):
+    def _cancel_removal(self) -> None:
         if self._removal_worker is not None:
             self._removal_worker.cancel()
         self.status_bar.showMessage("Cancelling removal...")
 
-    def _show_context_menu(self, pos):
+    def _show_context_menu(self, pos) -> None:
         item = self.table.itemAt(pos)
         if item is None:
             return
@@ -851,7 +858,7 @@ class OrphanCleaner(QMainWindow):
         add_to_ignore(get_ignore_file(), [name])
         self.status_bar.showMessage(f"Added '{name}' to ignore list")
 
-    def _add_to_ignore(self):
+    def _add_to_ignore(self) -> None:
         if self._removal_running:
             return
         pkgs = self._checked_packages()

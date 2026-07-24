@@ -1,3 +1,4 @@
+"""Worker classes for scan, dependency checking, and removal operations in the GUI."""
 from PySide6.QtCore import QObject, Signal
 
 from ..scanner import get_dependents
@@ -7,16 +8,19 @@ from ..services import (
     remove_aur_deps,
     remove_cache_packages,
     remove_flatpak_packages,
+    remove_npm_cache,
     remove_obsolete_steam_runtimes,
     remove_ollama_models,
     remove_orphaned_proton_prefixes,
     remove_packages_batch,
     remove_stale_launcher_runners,
+    remove_stale_node_modules,
 )
 from .constants import _REMOVAL_LABELS, _SCAN_FUNCTIONS
 
 
 class ScanWorker(QObject):
+    """Worker for scanning packages based on selected mode."""
     finished = Signal(object, int)
     error = Signal(str)
     cancelled = Signal()
@@ -45,6 +49,7 @@ class ScanWorker(QObject):
 
 
 class DependentsWorker(QObject):
+    """Worker for checking package dependents before removal."""
     finished = Signal(dict)
     error = Signal(str)
 
@@ -72,6 +77,7 @@ class DependentsWorker(QObject):
 
 
 class RemovalWorker(QObject):
+    """Worker for removing packages, handling batch removal and progress reporting."""
     progress = Signal(str)
     finished = Signal(bool, str)
 
@@ -107,6 +113,10 @@ class RemovalWorker(QObject):
             remove_ollama_models(self.names, cancel_check=lambda: self._cancelled)
         elif m == "launcher-runner":
             remove_stale_launcher_runners(self.names)
+        elif m == "npm-cache":
+            remove_npm_cache(cancel_check=lambda: self._cancelled)
+        elif m == "npm-stale":
+            remove_stale_node_modules(self.names, cancel_check=lambda: self._cancelled)
 
     def run(self) -> None:
         try:
