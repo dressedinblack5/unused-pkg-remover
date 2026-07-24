@@ -1,6 +1,5 @@
 """Scanning utilities for detecting unused packages, caches, and other resources."""
 
-import json
 import os
 import re
 import shutil
@@ -427,9 +426,10 @@ def get_aur_cache_packages() -> list[dict]:
 
 
 def get_steam_library_paths() -> list[Path]:
-    """Discover all Steam library folders from libraryfolders.vdf (supports both old/new VDF formats).
+    """Discover all Steam library folders from libraryfolders.vdf.
 
-    Falls back to the default ~/.steam/steam path if the VDF file is missing.
+    Supports both old/new VDF formats. Falls back to the default
+    ~/.steam/steam path if the VDF file is missing.
     """
     default_steam = Path.home() / ".steam" / "steam"
     vdf_path = default_steam / "steamapps" / "libraryfolders.vdf"

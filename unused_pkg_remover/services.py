@@ -147,7 +147,6 @@ def remove_orphaned_proton_prefixes(names: list[str]) -> None:
     library_paths = get_steam_library_paths()
     errors = []
     for name in names:
-        found = False
         for lib_path in library_paths:
             target = lib_path / "steamapps" / "compatdata" / name
             if target.exists():
@@ -155,7 +154,6 @@ def remove_orphaned_proton_prefixes(names: list[str]) -> None:
                     shutil.rmtree(target)
                 except OSError as e:
                     errors.append(str(e))
-                found = True
                 break
     if errors:
         raise RemovalError("; ".join(errors))
@@ -165,7 +163,6 @@ def remove_obsolete_steam_runtimes(names: list[str]) -> None:
     library_paths = get_steam_library_paths()
     errors = []
     for name in names:
-        found = False
         for lib_path in library_paths:
             target = lib_path / "steamapps" / "common" / name
             if target.exists():
@@ -173,7 +170,6 @@ def remove_obsolete_steam_runtimes(names: list[str]) -> None:
                     shutil.rmtree(target)
                 except OSError as e:
                     errors.append(str(e))
-                found = True
                 break
     if errors:
         raise RemovalError("; ".join(errors))
@@ -214,8 +210,9 @@ def remove_stale_launcher_runners(names: list[str]) -> None:
     flatpak_bottles = var / "com.usebottles.bottles" / "data" / "bottles" / "runners"
     if flatpak_bottles.exists():
         prefix_roots["bottles:"] = flatpak_bottles
-    flatpak_heroic_wine = var / "com.heroicgameslauncher.hgl" / "config" / "heroic" / "tools" / "runners" / "wine"
-    flatpak_heroic_proton = var / "com.heroicgameslauncher.hgl" / "config" / "heroic" / "tools" / "runners" / "proton"
+    heroic_base = var / "com.heroicgameslauncher.hgl" / "config" / "heroic" / "tools" / "runners"
+    flatpak_heroic_wine = heroic_base / "wine"
+    flatpak_heroic_proton = heroic_base / "proton"
     if flatpak_heroic_wine.exists():
         prefix_roots["heroic:wine/"] = flatpak_heroic_wine
     if flatpak_heroic_proton.exists():
