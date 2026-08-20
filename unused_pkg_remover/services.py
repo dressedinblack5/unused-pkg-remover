@@ -13,6 +13,27 @@ from .scanner import get_steam_library_paths
 
 RemovalError = RuntimeError
 
+CancelCheck = Callable[[], bool]
+
+
+def _validate_path_within_root(target: Path, allowed_root: Path) -> bool:
+    """Validate that target path is within allowed_root to prevent path traversal."""
+    try:
+        resolved_target = target.resolve()
+        resolved_root = allowed_root.resolve()
+        return str(resolved_target).startswith(str(resolved_root))
+    except (OSError, RuntimeError):
+        return False
+
+
+def _sanitize_package_name(name: str) -> str:
+    """Sanitize package name to prevent injection - allow only safe chars."""
+    import re
+
+    if not re.fullmatch(r"[A-Za-z0-9._@:+/-]+", name):
+        raise RemovalError(f"Invalid package name: {name}")
+    return name
+
 
 _data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
 HISTORY_DIR = _data_home / "unused-pkg-remover"
@@ -23,7 +44,7 @@ BATCH_SIZE = 50
 def run_pkexec(
     cmd: list[str],
     *,
-    cancel_check: Callable | None = None,
+    cancel_check: CancelCheck | None = None,
     timeout: float = 120,
 ) -> str:
     """Run a pkexec command with polling for cancellation and timeout.
@@ -57,13 +78,15 @@ def run_pkexec(
 
 
 def remove_packages_batch(
-    names: list[str], force: bool = False, cancel_check: Callable | None = None
+    names: list[str], force: bool = False, cancel_check: CancelCheck | None = None
 ) -> None:
+    for name in names:
+        _sanitize_package_name(name)
     base = ["pkexec", "pacman", "-Rns", "--nodeps"] if force else ["pkexec", "pacman", "-Rns"]
     run_pkexec(base + ["--noconfirm"] + names, cancel_check=cancel_check)
 
 
-def log_removal(packages: list[dict]) -> None:
+def log_removal(packages: list[dict[str, str | int | bool]]) -> None:
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
     with open(HISTORY_FILE, "a") as f:
         from datetime import datetime
@@ -80,20 +103,26 @@ def add_to_ignore(ignore_file_path: Path, package_names: list[str]) -> None:
             f.write(f"{name}\n")
 
 
-def remove_cache_packages(names: list[str], *, cancel_check: Callable | None = None) -> None:
+def remove_cache_packages(names: list[str], *, cancel_check: CancelCheck | None = None) -> None:
+    for name in names:
+        _sanitize_package_name(name)
     cache_dir = Path("/var/cache/pacman/pkg")
     files = []
     for name in names:
         pattern = re.compile(rf"^{re.escape(name)}-\d")
         for f in cache_dir.iterdir():
             if pattern.match(f.name):
-                files.append(str(f))
+                target = cache_dir / f.name
+                if _validate_path_within_root(target, cache_dir):
+                    files.append(str(target))
     if not files:
         return
     run_pkexec(["pkexec", "rm", "-f"] + files, cancel_check=cancel_check)
 
 
-def remove_flatpak_packages(names: list[str], *, cancel_check: Callable | None = None) -> None:
+def remove_flatpak_packages(names: list[str], *, cancel_check: CancelCheck | None = None) -> None:
+    for name in names:
+        _sanitize_package_name(name)
     if cancel_check and cancel_check():
         raise RemovalError("Cancelled")
     try:
@@ -107,7 +136,7 @@ def remove_flatpak_packages(names: list[str], *, cancel_check: Callable | None =
         raise RemovalError(e.stderr or str(e)) from e
 
 
-def remove_aur_deps(*, cancel_check: Callable | None = None) -> None:
+def remove_aur_deps(*, cancel_check: CancelCheck | None = None) -> None:
     if cancel_check and cancel_check():
         raise RemovalError("Cancelled")
     if shutil.which("yay"):
@@ -124,6 +153,8 @@ def remove_aur_deps(*, cancel_check: Callable | None = None) -> None:
 
 def remove_aur_cache_packages(names: list[str]) -> None:
     """Remove AUR build source directories from yay/paru cache."""
+    for name in names:
+        _sanitize_package_name(name)
     cache_roots = [Path.home() / ".cache" / "yay"]
     paru_cache = Path.home() / ".cache" / "paru"
     if paru_cache.exists():
@@ -136,10 +167,13 @@ def remove_aur_cache_packages(names: list[str]) -> None:
         for root in cache_roots:
             target = root / name
             if target.exists():
-                try:
-                    shutil.rmtree(target)
-                except OSError as e:
-                    errors.append(str(e))
+                if _validate_path_within_root(target, root):
+                    try:
+                        shutil.rmtree(target)
+                    except OSError as e:
+                        errors.append(str(e))
+                else:
+                    errors.append(f"Path traversal blocked: {target}")
     if errors:
         raise RemovalError("; ".join(errors))
 
@@ -148,13 +182,17 @@ def remove_orphaned_proton_prefixes(names: list[str]) -> None:
     library_paths = get_steam_library_paths()
     errors = []
     for name in names:
+        _sanitize_package_name(name)
         for lib_path in library_paths:
             target = lib_path / "steamapps" / "compatdata" / name
             if target.exists():
-                try:
-                    shutil.rmtree(target)
-                except OSError as e:
-                    errors.append(str(e))
+                if _validate_path_within_root(target, lib_path):
+                    try:
+                        shutil.rmtree(target)
+                    except OSError as e:
+                        errors.append(str(e))
+                else:
+                    errors.append(f"Path traversal blocked: {target}")
                 break
     if errors:
         raise RemovalError("; ".join(errors))
@@ -164,19 +202,25 @@ def remove_obsolete_steam_runtimes(names: list[str]) -> None:
     library_paths = get_steam_library_paths()
     errors = []
     for name in names:
+        _sanitize_package_name(name)
         for lib_path in library_paths:
             target = lib_path / "steamapps" / "common" / name
             if target.exists():
-                try:
-                    shutil.rmtree(target)
-                except OSError as e:
-                    errors.append(str(e))
+                if _validate_path_within_root(target, lib_path):
+                    try:
+                        shutil.rmtree(target)
+                    except OSError as e:
+                        errors.append(str(e))
+                else:
+                    errors.append(f"Path traversal blocked: {target}")
                 break
     if errors:
         raise RemovalError("; ".join(errors))
 
 
-def remove_ollama_models(names: list[str], *, cancel_check: Callable | None = None) -> None:
+def remove_ollama_models(names: list[str], *, cancel_check: CancelCheck | None = None) -> None:
+    for name in names:
+        _sanitize_package_name(name)
     if cancel_check and cancel_check():
         raise RemovalError("Cancelled")
     try:
@@ -220,6 +264,7 @@ def remove_stale_launcher_runners(names: list[str]) -> None:
         prefix_roots["heroic:proton/"] = flatpak_heroic_proton
     errors = []
     for name in names:
+        _sanitize_package_name(name)
         matched = None
         for prefix, root in prefix_roots.items():
             if name.startswith(prefix):
@@ -228,21 +273,19 @@ def remove_stale_launcher_runners(names: list[str]) -> None:
                 break
         if matched is None:
             continue
-        prefix_root = str(prefix_roots[matched].resolve())
         if target.exists():
-            resolved = target.resolve()
-            if not str(resolved).startswith(prefix_root):
+            if _validate_path_within_root(target, root):
+                try:
+                    shutil.rmtree(target)
+                except OSError as e:
+                    errors.append(str(e))
+            else:
                 errors.append(f"Path traversal blocked: {target}")
-                continue
-            try:
-                shutil.rmtree(resolved)
-            except OSError as e:
-                errors.append(str(e))
     if errors:
         raise RemovalError("; ".join(errors))
 
 
-def remove_npm_cache(*, cancel_check: Callable | None = None) -> None:
+def remove_npm_cache(*, cancel_check: CancelCheck | None = None) -> None:
     """Clean the entire npm cache."""
     if cancel_check and cancel_check():
         raise RemovalError("Cancelled")
@@ -257,7 +300,7 @@ def remove_npm_cache(*, cancel_check: Callable | None = None) -> None:
         raise RemovalError(e.stderr or str(e)) from e
 
 
-def remove_stale_node_modules(names: list[str], *, cancel_check: Callable | None = None) -> None:
+def remove_stale_node_modules(names: list[str], *, cancel_check: CancelCheck | None = None) -> None:
     """Remove orphaned node_modules directories from deleted projects."""
     scan_dirs = [
         Path.home() / "Projects",
@@ -268,18 +311,22 @@ def remove_stale_node_modules(names: list[str], *, cancel_check: Callable | None
     ]
     errors = []
     for name in names:
+        _sanitize_package_name(name)
         found = False
         for scan_dir in scan_dirs:
             if not scan_dir.exists():
                 continue
             target = scan_dir / name / "node_modules"
             if target.exists():
-                try:
-                    if cancel_check and cancel_check():
-                        raise RemovalError("Cancelled")
-                    shutil.rmtree(target)
-                except OSError as e:
-                    errors.append(str(e))
+                if _validate_path_within_root(target, scan_dir):
+                    try:
+                        if cancel_check and cancel_check():
+                            raise RemovalError("Cancelled")
+                        shutil.rmtree(target)
+                    except OSError as e:
+                        errors.append(str(e))
+                else:
+                    errors.append(f"Path traversal blocked: {target}")
                 found = True
                 break
         if not found:

@@ -34,13 +34,13 @@ from ..services import (
     run_pkexec,
 )
 from .constants import (
-    _AVAILABLE_MODES,
     _PROGRESS_STYLE,
     COL_DESC,
     COL_NAME,
     COL_SELECT,
     COL_SIZE,
     COL_TYPE,
+    get_available_modes,
     get_ignore_file,
 )
 from .theme import NumericTableItem, size_color
@@ -112,8 +112,9 @@ class OrphanCleaner(QMainWindow):
         mode_label.setStyleSheet("color: #a0a0a0; font-size: 13px;")
         mode_row.addWidget(mode_label)
         self.mode_combo = QComboBox()
-        self._mode_keys = [k for k, _ in _AVAILABLE_MODES]
-        for _, label in _AVAILABLE_MODES:
+        modes = get_available_modes()
+        self._mode_keys = [k for k, _ in modes]
+        for _, label in modes:
             self.mode_combo.addItem(label)
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         self.mode_combo.setStyleSheet("""

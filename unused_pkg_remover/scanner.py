@@ -4,13 +4,49 @@ import os
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from .constants import _CACHE_ARCHES, _CACHE_EXTS
 
+# Type aliases
+PackageDict = dict[str, str | int | bool]
+ScanFunc = Callable[[], tuple[list[PackageDict], int]]
+
+
+def _make_package(
+    name: str,
+    size: int,
+    desc: str,
+    type_tag: str,
+    **extra: str | int | bool,
+) -> PackageDict:
+    """Create a standardized package dictionary."""
+    pkg: PackageDict = {"name": name, "size": size, "desc": desc, "type_tag": type_tag}
+    pkg.update(extra)
+    return pkg
+
+
+def _sort_by_size_desc(packages: list[PackageDict]) -> list[PackageDict]:
+    """Sort packages by size descending."""
+    packages.sort(key=lambda x: x["size"], reverse=True)
+    return packages
+
+
+def _deduplicate_by_name(packages: list[PackageDict], key: str = "name") -> list[PackageDict]:
+    """Deduplicate packages by name, keeping first occurrence."""
+    seen: set[str] = set()
+    result: list[PackageDict] = []
+    for pkg in packages:
+        name = pkg[key]
+        if name not in seen:
+            seen.add(name)
+            result.append(pkg)
+    return result
+
 
 def get_ignored_packages() -> set[str]:
-    ignored = set()
+    ignored: set[str] = set()
     paths = []
     if "UNUSED_IGNORE" in os.environ:
         paths.append(Path(os.environ["UNUSED_IGNORE"]))
@@ -86,10 +122,10 @@ def _get_orphan_names() -> list[str]:
     return []
 
 
-def _query_expac(package_names: list[str]) -> list[dict]:
+def _query_expac(package_names: list[str]) -> list[PackageDict]:
     cmd = ["expac", "-Q", "%n|%l|%d|%m"] + package_names
     result = subprocess.run(cmd, capture_output=True, text=True)
-    packages = []
+    packages: list[PackageDict] = []
     for line in result.stdout.splitlines():
         parts = line.split("|")
         if len(parts) == 4:
@@ -99,15 +135,9 @@ def _query_expac(package_names: list[str]) -> list[dict]:
             except ValueError:
                 size = 0
             packages.append(
-                {
-                    "name": name,
-                    "date": date,
-                    "desc": desc,
-                    "size": size,
-                }
+                _make_package(name=name, size=size, desc=desc, type_tag="repo", date=date)
             )
-    packages.sort(key=lambda x: x["size"], reverse=True)
-    return packages
+    return _sort_by_size_desc(packages)
 
 
 def _get_base_packages() -> set[str]:
@@ -126,7 +156,7 @@ def _get_base_packages() -> set[str]:
     return set()
 
 
-def get_unused_packages() -> tuple[list[dict], int]:
+def get_unused_packages() -> tuple[list[PackageDict], int]:
     if not shutil.which("expac"):
         raise RuntimeError("expac not found. Install it: sudo pacman -S expac")
 
@@ -137,12 +167,13 @@ def get_unused_packages() -> tuple[list[dict], int]:
     ignored = get_ignored_packages() | get_explicitly_installed_packages() | _get_base_packages()
     aur_pkgs = get_aur_packages()
 
-    unused = []
+    unused: list[PackageDict] = []
     filtered_count = 0
     for pkg in _query_expac(orphans):
         if pkg["name"].lower() in ignored:
             filtered_count += 1
             continue
+        pkg = dict(pkg)
         pkg["is_aur"] = pkg["name"].lower() in aur_pkgs
         unused.append(pkg)
 
@@ -207,23 +238,24 @@ def _iter_cache_entries() -> list[dict]:
     return entries
 
 
-def get_cache_packages() -> list[dict]:
+def get_cache_packages() -> list[PackageDict]:
     """All cached packages grouped by package name, including installed packages."""
     by_name: dict[str, list[dict]] = {}
     for e in _iter_cache_entries():
         by_name.setdefault(e["extracted"], []).append(e)
     packages = [
-        {
-            "name": name,
-            "size": sum(e["size"] for e in entries),
-            "desc": f"{len(entries)} cached version(s)"
-            + (", not installed" if not entries[0]["installed"] else ""),
-            "type_tag": "cache",
-        }
+        _make_package(
+            name=name,
+            size=sum(e["size"] for e in entries),
+            desc=(
+                f"{len(entries)} cached version(s)"
+                + (", not installed" if not entries[0]["installed"] else "")
+            ),
+            type_tag="cache",
+        )
         for name, entries in by_name.items()
     ]
-    packages.sort(key=lambda x: x["size"], reverse=True)
-    return packages
+    return _sort_by_size_desc(packages)
 
 
 def _parse_human_size(s: str) -> int:
@@ -240,12 +272,12 @@ def _parse_human_size(s: str) -> int:
         return 0
 
 
-def get_unused_flatpaks() -> list[dict]:
+def get_unused_flatpaks() -> list[PackageDict]:
     if not shutil.which("flatpak"):
         return []
     env = {**os.environ, "LANG": "C"}
 
-    names = []
+    names: list[str] = []
     # flatpak list --unused added in flatpak 1.14.
     # Try it first; if flatpak doesn't recognise --unused, fall back to
     # parsing the output of "flatpak uninstall --unused" with simulated "n".
@@ -287,7 +319,7 @@ def get_unused_flatpaks() -> list[dict]:
         msg = stderr.strip() or f"flatpak list --unused exited with code {result.returncode}"
         raise RuntimeError(msg)
 
-    sizes = {}
+    sizes: dict[str, int] = {}
     if names:
         for name in names:
             info = subprocess.run(
@@ -305,25 +337,25 @@ def get_unused_flatpaks() -> list[dict]:
                         break
 
     packages = [
-        {
-            "name": n,
-            "size": sizes.get(n, 0),
-            "desc": "Unused Flatpak runtime",
-            "type_tag": "flatpak",
-        }
+        _make_package(
+            name=n,
+            size=sizes.get(n, 0),
+            desc="Unused Flatpak runtime",
+            type_tag="flatpak",
+        )
         for n in names
     ]
-    return packages
+    return _sort_by_size_desc(packages)
 
 
-def get_broken_packages() -> list[dict]:
+def get_broken_packages() -> list[PackageDict]:
     if not shutil.which("pacman"):
         return []
     result = subprocess.run(["pacman", "-Qk"], capture_output=True, text=True)
     if result.returncode != 0:
         return []
-    names = []
-    descs = {}
+    names: list[str] = []
+    descs: dict[str, str] = {}
     for line in result.stdout.splitlines():
         if "missing" in line or "ERROR" in line:
             name = line.split(":")[0].strip()
@@ -345,13 +377,13 @@ def get_broken_packages() -> list[dict]:
                 sizes[i] = int(s) if s.isdigit() else 0
 
     packages = [
-        {"name": n, "size": s, "desc": descs[n], "type_tag": "broken"}
+        _make_package(name=n, size=s, desc=descs[n], type_tag="broken")
         for n, s in zip(names, sizes, strict=True)
     ]
-    return packages
+    return _sort_by_size_desc(packages)
 
 
-def get_aur_build_deps() -> list[dict]:
+def get_aur_build_deps() -> list[PackageDict]:
     orphans = _get_orphan_names()
     if not orphans:
         return []
@@ -359,45 +391,46 @@ def get_aur_build_deps() -> list[dict]:
     if not aur_pkgs:
         return []
 
-    packages = []
+    packages: list[PackageDict] = []
     for pkg in _query_expac(orphans):
         if pkg["name"].lower() in aur_pkgs:
             packages.append(
-                {
-                    "name": pkg["name"],
-                    "size": pkg["size"],
-                    "desc": "Unused AUR build dependency",
-                    "type_tag": "aur-dep",
-                }
+                _make_package(
+                    name=pkg["name"],
+                    size=pkg["size"],
+                    desc="Unused AUR build dependency",
+                    type_tag="aur-dep",
+                )
             )
 
-    return packages
+    return _sort_by_size_desc(packages)
 
 
-def get_aur_cache_packages() -> list[dict]:
+def get_aur_cache_packages() -> list[PackageDict]:
     """Show cached AUR build sources from yay/paru."""
-    packages = []
-
+    packages: list[PackageDict] = []
     seen_names: set[str] = set()
 
+    def scan_cache_root(root: Path) -> None:
+        if root.exists():
+            for d in sorted(root.iterdir()):
+                if d.is_dir() and d.name not in seen_names:
+                    seen_names.add(d.name)
+                    try:
+                        total = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+                    except OSError:
+                        total = 0
+                    packages.append(
+                        _make_package(
+                            name=d.name,
+                            size=total,
+                            desc="AUR build source",
+                            type_tag="aur-cache",
+                        )
+                    )
+
     # yay stores package sources directly under ~/.cache/yay/<pkg>/
-    yay_cache = Path.home() / ".cache" / "yay"
-    if yay_cache.exists():
-        for d in sorted(yay_cache.iterdir()):
-            if d.is_dir() and d.name not in seen_names:
-                seen_names.add(d.name)
-                try:
-                    total = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
-                except OSError:
-                    total = 0
-                packages.append(
-                    {
-                        "name": d.name,
-                        "size": total,
-                        "desc": "AUR build source",
-                        "type_tag": "aur-cache",
-                    }
-                )
+    scan_cache_root(Path.home() / ".cache" / "yay")
 
     # paru stores clones under ~/.cache/paru/clone/<pkg>/
     paru_cache = Path.home() / ".cache" / "paru"
@@ -405,24 +438,9 @@ def get_aur_cache_packages() -> list[dict]:
         paru_root = paru_cache / "clone"
         if not paru_root.exists():
             paru_root = paru_cache  # fallback for older paru versions
-        for d in sorted(paru_root.iterdir()):
-            if d.is_dir() and d.name not in seen_names:
-                seen_names.add(d.name)
-                try:
-                    total = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
-                except OSError:
-                    total = 0
-                packages.append(
-                    {
-                        "name": d.name,
-                        "size": total,
-                        "desc": "AUR build source",
-                        "type_tag": "aur-cache",
-                    }
-                )
+        scan_cache_root(paru_root)
 
-    packages.sort(key=lambda x: x["size"], reverse=True)
-    return packages
+    return _sort_by_size_desc(packages)
 
 
 def get_steam_library_paths() -> list[Path]:
@@ -459,12 +477,12 @@ def get_steam_library_paths() -> list[Path]:
     return paths
 
 
-def get_orphaned_proton_prefixes() -> list[dict]:
+def get_orphaned_proton_prefixes() -> list[PackageDict]:
     library_paths = get_steam_library_paths()
     if not library_paths:
         return []
 
-    installed = set()
+    installed: set[str] = set()
     for lib_path in library_paths:
         for mf in (lib_path / "steamapps").glob("appmanifest_*.acf"):
             try:
@@ -479,7 +497,7 @@ def get_orphaned_proton_prefixes() -> list[dict]:
             except OSError:
                 continue
 
-    packages = []
+    packages: list[PackageDict] = []
     seen_appids: set[str] = set()
     for lib_path in library_paths:
         compatdata = lib_path / "steamapps" / "compatdata"
@@ -496,19 +514,18 @@ def get_orphaned_proton_prefixes() -> list[dict]:
             except OSError:
                 size = 0
             packages.append(
-                {
-                    "name": d.name,
-                    "size": size,
-                    "desc": "Orphaned Proton prefix",
-                    "type_tag": "proton-prefix",
-                }
+                _make_package(
+                    name=d.name,
+                    size=size,
+                    desc="Orphaned Proton prefix",
+                    type_tag="proton-prefix",
+                )
             )
 
-    packages.sort(key=lambda x: x["size"], reverse=True)
-    return packages
+    return _sort_by_size_desc(packages)
 
 
-def get_obsolete_steam_runtimes() -> list[dict]:
+def get_obsolete_steam_runtimes() -> list[PackageDict]:
     library_paths = get_steam_library_paths()
     if not library_paths:
         return []
@@ -528,7 +545,7 @@ def get_obsolete_steam_runtimes() -> list[dict]:
             except OSError:
                 continue
 
-    packages = []
+    packages: list[PackageDict] = []
     seen_names: set[str] = set()
     runtime_keywords = (
         "proton",
@@ -561,22 +578,21 @@ def get_obsolete_steam_runtimes() -> list[dict]:
             except OSError:
                 size = 0
             packages.append(
-                {
-                    "name": d.name,
-                    "size": size,
-                    "desc": "Obsolete Steam runtime",
-                    "type_tag": "steam-runtime",
-                }
+                _make_package(
+                    name=d.name,
+                    size=size,
+                    desc="Obsolete Steam runtime",
+                    type_tag="steam-runtime",
+                )
             )
 
-    packages.sort(key=lambda x: x["size"], reverse=True)
-    return packages
+    return _sort_by_size_desc(packages)
 
 
-def _scan_runner_dir(root: Path, prefix: str, desc: str, sep: str = ":") -> list[dict]:
+def _scan_runner_dir(root: Path, prefix: str, desc: str, sep: str = ":") -> list[PackageDict]:
     if not root.exists():
         return []
-    packages = []
+    packages: list[PackageDict] = []
     for d in root.iterdir():
         if not d.is_dir():
             continue
@@ -585,17 +601,17 @@ def _scan_runner_dir(root: Path, prefix: str, desc: str, sep: str = ":") -> list
         except OSError:
             size = 0
         packages.append(
-            {
-                "name": f"{prefix}{sep}{d.name}",
-                "size": size,
-                "desc": desc,
-                "type_tag": "launcher-runner",
-            }
+            _make_package(
+                name=f"{prefix}{sep}{d.name}",
+                size=size,
+                desc=desc,
+                type_tag="launcher-runner",
+            )
         )
     return packages
 
 
-def get_ollama_models() -> list[dict]:
+def get_ollama_models() -> list[PackageDict]:
     """Fetch locally installed Ollama models via `ollama list`."""
     if not shutil.which("ollama"):
         return []
@@ -605,7 +621,7 @@ def get_ollama_models() -> list[dict]:
         msg = result.stderr.strip() or f"ollama list exited with code {result.returncode}"
         raise RuntimeError(msg)
 
-    packages = []
+    packages: list[PackageDict] = []
     lines = result.stdout.splitlines()
     for line in lines[1:]:
         if not line.strip():
@@ -617,17 +633,9 @@ def get_ollama_models() -> list[dict]:
         # ollama list SIZE column is two tokens: number + unit, e.g. "1.2" "GB"
         size_str = f"{parts[2]} {parts[3]}"
         size = _parse_human_size(size_str)
-        packages.append(
-            {
-                "name": name,
-                "size": size,
-                "desc": "Ollama model",
-                "type_tag": "ollama",
-            }
-        )
+        packages.append(_make_package(name=name, size=size, desc="Ollama model", type_tag="ollama"))
 
-    packages.sort(key=lambda x: x["size"], reverse=True)
-    return packages
+    return _sort_by_size_desc(packages)
 
 
 def _get_runner_roots() -> list[tuple[Path, str, str, str]]:
@@ -679,19 +687,18 @@ def _get_runner_roots() -> list[tuple[Path, str, str, str]]:
     return roots
 
 
-def get_stale_launcher_runners() -> list[dict]:
-    packages = []
+def get_stale_launcher_runners() -> list[PackageDict]:
+    packages: list[PackageDict] = []
     seen_names: set[str] = set()
     for root, prefix, desc, sep in _get_runner_roots():
         for pkg in _scan_runner_dir(root, prefix, desc, sep):
             if pkg["name"] not in seen_names:
                 seen_names.add(pkg["name"])
                 packages.append(pkg)
-    packages.sort(key=lambda x: x["size"], reverse=True)
-    return packages
+    return _sort_by_size_desc(packages)
 
 
-def get_npm_cache_packages() -> list[dict]:
+def get_npm_cache_packages() -> list[PackageDict]:
     """Read-only scan: report npm cache size as reclaimable space."""
     if not shutil.which("npm"):
         return []
@@ -713,16 +720,16 @@ def get_npm_cache_packages() -> list[dict]:
         return []
 
     return [
-        {
-            "name": "npm-cache",
-            "size": total,
-            "desc": f"npm package cache ({cache_dir})",
-            "type_tag": "npm-cache",
-        }
+        _make_package(
+            name="npm-cache",
+            size=total,
+            desc=f"npm package cache ({cache_dir})",
+            type_tag="npm-cache",
+        )
     ]
 
 
-def get_stale_node_modules() -> list[dict]:
+def get_stale_node_modules() -> list[PackageDict]:
     """Read-only scan: find node_modules orphaned by deleted/moved projects."""
     scan_dirs = [
         Path.home() / "Projects",
@@ -732,7 +739,7 @@ def get_stale_node_modules() -> list[dict]:
         Path.home() / "code",
     ]
 
-    packages = []
+    packages: list[PackageDict] = []
     seen_names: set[str] = set()
     for scan_dir in scan_dirs:
         if not scan_dir.exists():
@@ -755,15 +762,14 @@ def get_stale_node_modules() -> list[dict]:
                 except OSError:
                     size = 0
                 packages.append(
-                    {
-                        "name": d.name,
-                        "size": size,
-                        "desc": "Stale node_modules (project missing package.json)",
-                        "type_tag": "npm-stale",
-                    }
+                    _make_package(
+                        name=d.name,
+                        size=size,
+                        desc="Stale node_modules (project missing package.json)",
+                        type_tag="npm-stale",
+                    )
                 )
         except OSError:
             continue
 
-    packages.sort(key=lambda x: x["size"], reverse=True)
-    return packages
+    return _sort_by_size_desc(packages)

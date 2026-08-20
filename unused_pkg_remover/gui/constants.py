@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 
 from ..scanner import (
+    ScanFunc,
     get_aur_build_deps,
     get_aur_cache_packages,
     get_broken_packages,
@@ -18,7 +19,7 @@ from ..scanner import (
     get_unused_packages,
 )
 
-_SCAN_FUNCTIONS = {
+_SCAN_FUNCTIONS: dict[str, ScanFunc] = {
     "orphans": get_unused_packages,
     "cache": lambda: (get_cache_packages(), 0),
     "flatpak": lambda: (get_unused_flatpaks(), 0),
@@ -33,7 +34,7 @@ _SCAN_FUNCTIONS = {
     "npm-stale": lambda: (get_stale_node_modules(), 0),
 }
 
-_REMOVAL_LABELS = {
+_REMOVAL_LABELS: dict[str, str] = {
     "cache": "Removing cached packages...",
     "flatpak": "Removing Flatpak runtimes...",
     "aur-dep": "Removing AUR build deps...",
@@ -46,44 +47,95 @@ _REMOVAL_LABELS = {
     "npm-stale": "Removing stale NPM modules...",
 }
 
-_AVAILABLE_MODES: list[tuple[str, str]] = [
-    ("orphans", "Orphans"),
-    ("cache", "Pacman Cache"),
-]
-if shutil.which("flatpak"):
-    _AVAILABLE_MODES.append(("flatpak", "Flatpak Runtimes"))
-_AVAILABLE_MODES.append(("broken", "Broken Packages"))
-if shutil.which("ollama"):
-    _AVAILABLE_MODES.append(("ollama", "Ollama Models"))
-has_aur_helper = shutil.which("yay") or shutil.which("paru")
-if has_aur_helper:
-    _AVAILABLE_MODES.append(("aur-dep", "AUR Build Deps"))
-    _AVAILABLE_MODES.append(("aur-cache", "AUR Build Cache"))
-_home = Path.home()
-if shutil.which("npm"):
-    _AVAILABLE_MODES.append(("npm-cache", "NPM Cache"))
-    if any(_home.joinpath(p).exists() for p in ["Projects", "dev", "src", "workspace", "code"]):
-        _AVAILABLE_MODES.append(("npm-stale", "NPM Stale Modules"))
+_AVAILABLE_MODES_CACHE: list[tuple[str, str]] | None = None
 
-_steam_dir = _home / ".steam" / "steam"
-_vdf_path = _steam_dir / "steamapps" / "libraryfolders.vdf"
-_has_steam = _steam_dir.exists()
-if _has_steam and (_steam_dir.joinpath("steamapps/compatdata").exists() or _vdf_path.exists()):
-    _AVAILABLE_MODES.append(("proton-prefix", "Proton Prefixes"))
-if _has_steam and (_steam_dir.joinpath("steamapps/common").exists() or _vdf_path.exists()):
-    _AVAILABLE_MODES.append(("steam-runtime", "Steam Runtimes"))
-if any(
-    _home.joinpath(p).exists()
-    for p in [
-        ".local/share/lutris/runners",
-        ".config/heroic",
-        ".local/share/bottles/runners",
-        ".var/app/net.lutris.Lutris/data/lutris/runners",
-        ".var/app/com.heroicgameslauncher.hgl/config/heroic",
-        ".var/app/com.usebottles.bottles/data/bottles/runners",
+
+def _has_flatpak() -> bool:
+    return shutil.which("flatpak") is not None
+
+
+def _has_ollama() -> bool:
+    return shutil.which("ollama") is not None
+
+
+def _has_aur_helper() -> bool:
+    return shutil.which("yay") is not None or shutil.which("paru") is not None
+
+
+def _has_npm() -> bool:
+    return shutil.which("npm") is not None
+
+
+def _has_project_dirs() -> bool:
+    home = Path.home()
+    return any(home.joinpath(p).exists() for p in ["Projects", "dev", "src", "workspace", "code"])
+
+
+def _has_steam() -> bool:
+    steam_dir = Path.home() / ".steam" / "steam"
+    return steam_dir.exists()
+
+
+def _has_steam_compatdata() -> bool:
+    steam_dir = Path.home() / ".steam" / "steam"
+    vdf_path = steam_dir / "steamapps" / "libraryfolders.vdf"
+    compatdata = steam_dir.joinpath("steamapps/compatdata")
+    return steam_dir.exists() and (compatdata.exists() or vdf_path.exists())
+
+
+def _has_steam_common() -> bool:
+    steam_dir = Path.home() / ".steam" / "steam"
+    vdf_path = steam_dir / "steamapps" / "libraryfolders.vdf"
+    common = steam_dir.joinpath("steamapps/common")
+    return steam_dir.exists() and (common.exists() or vdf_path.exists())
+
+
+def _has_launcher_runners() -> bool:
+    home = Path.home()
+    return any(
+        home.joinpath(p).exists()
+        for p in [
+            ".local/share/lutris/runners",
+            ".config/heroic",
+            ".local/share/bottles/runners",
+            ".var/app/net.lutris.Lutris/data/lutris/runners",
+            ".var/app/com.heroicgameslauncher.hgl/config/heroic",
+            ".var/app/com.usebottles.bottles/data/bottles/runners",
+        ]
+    )
+
+
+def get_available_modes() -> list[tuple[str, str]]:
+    """Get available scan modes, computing them lazily on first call."""
+    global _AVAILABLE_MODES_CACHE
+    if _AVAILABLE_MODES_CACHE is not None:
+        return _AVAILABLE_MODES_CACHE
+
+    modes: list[tuple[str, str]] = [
+        ("orphans", "Orphans"),
+        ("cache", "Pacman Cache"),
     ]
-):
-    _AVAILABLE_MODES.append(("launcher-runner", "Launcher Runners"))
+    if _has_flatpak():
+        modes.append(("flatpak", "Flatpak Runtimes"))
+    modes.append(("broken", "Broken Packages"))
+    if _has_ollama():
+        modes.append(("ollama", "Ollama Models"))
+    if _has_aur_helper():
+        modes.append(("aur-dep", "AUR Build Deps"))
+        modes.append(("aur-cache", "AUR Build Cache"))
+    if _has_npm():
+        modes.append(("npm-cache", "NPM Cache"))
+        if _has_project_dirs():
+            modes.append(("npm-stale", "NPM Stale Modules"))
+    if _has_steam_compatdata():
+        modes.append(("proton-prefix", "Proton Prefixes"))
+    if _has_steam_common():
+        modes.append(("steam-runtime", "Steam Runtimes"))
+    if _has_launcher_runners():
+        modes.append(("launcher-runner", "Launcher Runners"))
+
+    _AVAILABLE_MODES_CACHE = modes
+    return modes
 
 
 def get_ignore_file() -> Path:

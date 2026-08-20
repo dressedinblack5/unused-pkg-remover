@@ -23,7 +23,7 @@ from .constants import _REMOVAL_LABELS, _SCAN_FUNCTIONS
 class ScanWorker(QObject):
     """Worker for scanning packages based on selected mode."""
 
-    finished = Signal(object, int)
+    finished = Signal(list, int)
     error = Signal(str)
     cancelled = Signal()
 
@@ -53,7 +53,7 @@ class ScanWorker(QObject):
 class DependentsWorker(QObject):
     """Worker for checking package dependents before removal."""
 
-    finished = Signal(dict)
+    finished = Signal(dict[str, list[str]])
     error = Signal(str)
 
     def __init__(self, names: list[str]) -> None:
@@ -66,7 +66,7 @@ class DependentsWorker(QObject):
 
     def run(self) -> None:
         try:
-            dependents = {}
+            dependents: dict[str, list[str]] = {}
             for name in self.names:
                 if self._cancelled:
                     break
@@ -98,15 +98,18 @@ class RemovalWorker(QObject):
     def cancel(self) -> None:
         self._cancelled = True
 
+    def _cancel_check(self) -> bool:
+        return self._cancelled
+
     def _run_nonorphan(self) -> None:
         m = self.mode
         self.progress.emit(_REMOVAL_LABELS.get(m, "Removing..."))
         if m == "cache":
-            remove_cache_packages(self.names, cancel_check=lambda: self._cancelled)
+            remove_cache_packages(self.names, cancel_check=self._cancel_check)
         elif m == "flatpak":
-            remove_flatpak_packages(self.names, cancel_check=lambda: self._cancelled)
+            remove_flatpak_packages(self.names, cancel_check=self._cancel_check)
         elif m == "aur-dep":
-            remove_aur_deps(cancel_check=lambda: self._cancelled)
+            remove_aur_deps(cancel_check=self._cancel_check)
         elif m == "aur-cache":
             remove_aur_cache_packages(self.names)
         elif m == "proton-prefix":
@@ -114,13 +117,13 @@ class RemovalWorker(QObject):
         elif m == "steam-runtime":
             remove_obsolete_steam_runtimes(self.names)
         elif m == "ollama":
-            remove_ollama_models(self.names, cancel_check=lambda: self._cancelled)
+            remove_ollama_models(self.names, cancel_check=self._cancel_check)
         elif m == "launcher-runner":
             remove_stale_launcher_runners(self.names)
         elif m == "npm-cache":
-            remove_npm_cache(cancel_check=lambda: self._cancelled)
+            remove_npm_cache(cancel_check=self._cancel_check)
         elif m == "npm-stale":
-            remove_stale_node_modules(self.names, cancel_check=lambda: self._cancelled)
+            remove_stale_node_modules(self.names, cancel_check=self._cancel_check)
 
     def run(self) -> None:
         try:
@@ -139,7 +142,7 @@ class RemovalWorker(QObject):
                         if num_batches > 1
                         else f"Removing {len(self.names)} packages..."
                     )
-                    remove_packages_batch(batch, self.force, cancel_check=lambda: self._cancelled)
+                    remove_packages_batch(batch, self.force, cancel_check=self._cancel_check)
             self.finished.emit(True, "")
         except RemovalError as e:
             self.finished.emit(False, str(e))
