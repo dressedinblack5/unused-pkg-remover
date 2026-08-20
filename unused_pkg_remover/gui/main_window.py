@@ -1,5 +1,5 @@
 from PySide6.QtCore import QSettings, Qt, QThread, QTimer
-from PySide6.QtGui import QColor, QKeySequence, QShortcut
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -34,7 +34,6 @@ from ..services import (
     run_pkexec,
 )
 from .constants import (
-    _PROGRESS_STYLE,
     COL_DESC,
     COL_NAME,
     COL_SELECT,
@@ -43,7 +42,7 @@ from .constants import (
     get_available_modes,
     get_ignore_file,
 )
-from .theme import NumericTableItem, size_color
+from .theme import NumericTableItem, get_type_color, size_color
 from .workers import DependentsWorker, RemovalWorker, ScanWorker
 
 
@@ -93,49 +92,21 @@ class OrphanCleaner(QMainWindow):
             "Some orphans may still be required by your system or workflow."
         )
         self.warning.setWordWrap(True)
-        self.warning.setStyleSheet("""
-            QLabel {
-                background-color: #3a2a00;
-                color: #ffcc66;
-                padding: 8px 12px;
-                border-radius: 4px;
-                border: 1px solid #5a4a00;
-                font-size: 12px;
-                font-weight: 500;
-            }
-        """)
+        self.warning.setProperty("class", "warning")
         layout.addWidget(self.warning)
 
         mode_row = QHBoxLayout()
         mode_row.setSpacing(8)
         mode_label = QLabel("Scan Mode:")
-        mode_label.setStyleSheet("color: #a0a0a0; font-size: 13px;")
+        mode_label.setProperty("class", "mode-label")
         mode_row.addWidget(mode_label)
         self.mode_combo = QComboBox()
+        self.mode_combo.setProperty("class", "mode-combo")
         modes = get_available_modes()
         self._mode_keys = [k for k, _ in modes]
         for _, label in modes:
             self.mode_combo.addItem(label)
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
-        self.mode_combo.setStyleSheet("""
-            QComboBox {
-                background-color: #252526;
-                color: #e0e0e0;
-                border: 1px solid #3c3c3c;
-                border-radius: 4px;
-                padding: 4px 8px;
-                font-size: 13px;
-                min-width: 180px;
-            }
-            QComboBox::drop-down {
-                border: none;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #252526;
-                color: #e0e0e0;
-                selection-background-color: #264f78;
-            }
-        """)
         mode_row.addWidget(self.mode_combo)
         mode_row.addStretch()
         layout.addLayout(mode_row)
@@ -147,19 +118,7 @@ class OrphanCleaner(QMainWindow):
         self.search.setPlaceholderText("Search packages...")
         self.search.textChanged.connect(self._filter_packages)
         self.search.setClearButtonEnabled(True)
-        self.search.setStyleSheet("""
-            QLineEdit {
-                background-color: #252526;
-                color: #e0e0e0;
-                border: 1px solid #3c3c3c;
-                border-radius: 4px;
-                padding: 6px 10px;
-                font-size: 13px;
-            }
-            QLineEdit:focus {
-                border-color: #58a6ff;
-            }
-        """)
+        self.search.setProperty("class", "search")
         search_row.addWidget(self.search, 1)
         layout.addLayout(search_row)
 
@@ -192,25 +151,7 @@ class OrphanCleaner(QMainWindow):
         self.header_checkbox = QCheckBox()
         self.header_checkbox.setFixedSize(24, 24)
         self.header_checkbox.setCursor(Qt.ArrowCursor)
-        self.header_checkbox.setStyleSheet("""
-            QCheckBox {
-                background: transparent;
-            }
-            QCheckBox::indicator {
-                width: 18px;
-                height: 18px;
-                border: 1px solid #5a5a5a;
-                border-radius: 3px;
-                background-color: #2d2d2d;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #264f78;
-                border-color: #58a6ff;
-            }
-            QCheckBox::indicator:unchecked {
-                background-color: #2d2d2d;
-            }
-        """)
+        self.header_checkbox.setProperty("class", "header-checkbox")
         self.header_checkbox.clicked.connect(self._toggle_all_visible)
         self.header_checkbox.setParent(hdr)
 
@@ -331,7 +272,6 @@ class OrphanCleaner(QMainWindow):
             self._scan_progress.setMinimumDuration(0)
             self._scan_progress.setWindowModality(Qt.WindowModal)
             self._scan_progress.canceled.connect(self._cancel_scan)
-            self._scan_progress.setStyleSheet(_PROGRESS_STYLE)
             self._scan_progress.show()
 
         self._scan_thread = QThread()
@@ -362,22 +302,6 @@ class OrphanCleaner(QMainWindow):
         row_count = len(self.packages)
         self.table.setRowCount(row_count)
 
-        type_colors = {
-            "AUR": "#ff7b72",
-            "repo": "#7ee787",
-            "cache": "#d2a8ff",
-            "flatpak": "#79c0ff",
-            "broken": "#ff7b72",
-            "aur-dep": "#ffab70",
-            "aur-cache": "#79c0ff",
-            "proton-prefix": "#ff7b72",
-            "steam-runtime": "#d2a8ff",
-            "ollama": "#79c0ff",
-            "launcher-runner": "#ffab70",
-            "npm-cache": "#d2a8ff",
-            "npm-stale": "#ff7b72",
-        }
-
         for i, pkg in enumerate(self.packages):
             row = i
             chk = QTableWidgetItem()
@@ -399,7 +323,7 @@ class OrphanCleaner(QMainWindow):
 
             tag = pkg.get("type_tag", "AUR" if pkg.get("is_aur") else "repo")
             type_item = QTableWidgetItem(tag)
-            type_item.setForeground(QColor(type_colors.get(tag, "#9e9e9e")))
+            type_item.setForeground(get_type_color(tag))
             self.table.setItem(row, COL_TYPE, type_item)
 
             desc = pkg["desc"]
@@ -488,14 +412,7 @@ class OrphanCleaner(QMainWindow):
 
         for chip_text in chips:
             chip = QLabel(chip_text)
-            chip.setStyleSheet("""
-                background-color: #3d3d3d;
-                color: #e0e0e0;
-                border: 1px solid #58a6ff;
-                border-radius: 10px;
-                padding: 2px 8px;
-                font-size: 11px;
-            """)
+            chip.setProperty("class", "filter-chip")
             self.filter_chips_layout.addWidget(chip)
 
     def _filter_packages(self, text) -> None:
@@ -599,15 +516,13 @@ class OrphanCleaner(QMainWindow):
             if dry_run
             else f"Remove {len(pkgs)} packages?"
         )
-        header.setStyleSheet("font-size: 14px; font-weight: 600; color: #e0e0e0;")
+        header.setProperty("class", "removal-header")
         layout.addWidget(header)
 
         if dep_warning:
             dep_label = QLabel(f"\u26a0  Dependency warnings:\n{dep_warning}")
             dep_label.setWordWrap(True)
-            dep_label.setStyleSheet(
-                "background-color: #3a2a00; color: #ffcc66; padding: 8px; border-radius: 4px;"
-            )
+            dep_label.setProperty("class", "dep-warning")
             layout.addWidget(dep_label)
 
         table = QTableWidget()
@@ -634,7 +549,7 @@ class OrphanCleaner(QMainWindow):
         layout.addWidget(table)
 
         total_label = QLabel(f"Total reclaimable: {format_size(total_size)}")
-        total_label.setStyleSheet("font-size: 13px; color: #7ee787; font-weight: 600;")
+        total_label.setProperty("class", "total-label")
         layout.addWidget(total_label)
 
         buttons = QDialogButtonBox()
@@ -675,7 +590,6 @@ class OrphanCleaner(QMainWindow):
         self._dep_progress.setMinimumDuration(0)
         self._dep_progress.setWindowModality(Qt.WindowModal)
         self._dep_progress.canceled.connect(self._cancel_dependents_check)
-        self._dep_progress.setStyleSheet(_PROGRESS_STYLE)
         self._dep_progress.show()
 
         self._dep_thread = QThread()
@@ -725,7 +639,6 @@ class OrphanCleaner(QMainWindow):
         progress.setMinimumDuration(0)
         progress.setWindowModality(Qt.WindowModal)
         progress.canceled.connect(self._cancel_removal)
-        progress.setStyleSheet(_PROGRESS_STYLE)
         progress.show()
         self.setEnabled(False)
         self._progress = progress
@@ -908,7 +821,7 @@ class OrphanCleaner(QMainWindow):
         layout.setSpacing(10)
 
         header = QLabel(f"{len(parsed)} packages removed")
-        header.setStyleSheet("font-size: 14px; font-weight: 600; color: #e0e0e0;")
+        header.setProperty("class", "history-header")
         layout.addWidget(header)
 
         table = QTableWidget()
@@ -971,7 +884,6 @@ class OrphanCleaner(QMainWindow):
         progress.setWindowTitle("Reinstalling")
         progress.setMinimumDuration(0)
         progress.setWindowModality(Qt.WindowModal)
-        progress.setStyleSheet(_PROGRESS_STYLE)
         progress.show()
 
         try:

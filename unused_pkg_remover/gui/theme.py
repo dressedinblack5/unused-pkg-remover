@@ -4,6 +4,28 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QStyleFactory, QTableWidgetItem
 
+# Type tag colors - single source of truth
+TYPE_COLORS = {
+    "AUR": "#ff7b72",
+    "repo": "#7ee787",
+    "cache": "#d2a8ff",
+    "flatpak": "#79c0ff",
+    "broken": "#ff7b72",
+    "aur-dep": "#ffab70",
+    "aur-cache": "#79c0ff",
+    "proton-prefix": "#ff7b72",
+    "steam-runtime": "#d2a8ff",
+    "ollama": "#79c0ff",
+    "launcher-runner": "#ffab70",
+    "npm-cache": "#d2a8ff",
+    "npm-stale": "#ff7b72",
+}
+
+
+def get_type_color(tag: str) -> QColor:
+    """Get QColor for a package type tag."""
+    return QColor(TYPE_COLORS.get(tag, "#9e9e9e"))
+
 
 def size_color(size: int) -> QColor:
     if size > 100 * 1024 * 1024:
@@ -162,5 +184,134 @@ def apply_dark_theme(app):
         }
         QMessageBox QPushButton {
             min-width: 80px;
+        }
+        /* Warning banner */
+        QLabel[class="warning"] {
+            background-color: #3a2a00;
+            color: #ffcc66;
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: 1px solid #5a4a00;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        /* Mode label */
+        QLabel[class="mode-label"] {
+            color: #a0a0a0;
+            font-size: 13px;
+        }
+        /* Search input */
+        QLineEdit[class="search"] {
+            background-color: #252526;
+            color: #e0e0e0;
+            border: 1px solid #3c3c3c;
+            border-radius: 4px;
+            padding: 6px 10px;
+            font-size: 13px;
+        }
+        QLineEdit[class="search"]:focus {
+            border-color: #58a6ff;
+        }
+        /* Mode combo */
+        QComboBox[class="mode-combo"] {
+            background-color: #252526;
+            color: #e0e0e0;
+            border: 1px solid #3c3c3c;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 13px;
+            min-width: 180px;
+        }
+        QComboBox[class="mode-combo"]::drop-down {
+            border: none;
+        }
+        QComboBox[class="mode-combo"] QAbstractItemView {
+            background-color: #252526;
+            color: #e0e0e0;
+            selection-background-color: #264f78;
+        }
+        /* Header checkbox */
+        QCheckBox[class="header-checkbox"] {
+            background: transparent;
+        }
+        QCheckBox[class="header-checkbox"]::indicator {
+            width: 18px;
+            height: 18px;
+            border: 1px solid #5a5a5a;
+            border-radius: 3px;
+            background-color: #2d2d2d;
+        }
+        QCheckBox[class="header-checkbox"]::indicator:checked {
+            background-color: #264f78;
+            border-color: #58a6ff;
+        }
+        QCheckBox[class="header-checkbox"]::indicator:unchecked {
+            background-color: #2d2d2d;
+        }
+        /* Filter chips */
+        QLabel[class="filter-chip"] {
+            background-color: #3d3d3d;
+            color: #e0e0e0;
+            border: 1px solid #58a6ff;
+            border-radius: 10px;
+            padding: 2px 8px;
+            font-size: 11px;
+        }
+        /* Progress dialogs */
+        QProgressDialog {
+            background-color: #1e1e1e;
+            color: #e0e0e0;
+        }
+        QProgressBar {
+            border: 1px solid #3c3c3c;
+            border-radius: 4px;
+            background-color: #252526;
+            text-align: center;
+        }
+        QProgressBar::chunk {
+            background-color: #58a6ff;
+            border-radius: 3px;
+        }
+        /* Dialog tables */
+        QDialog QTableWidget {
+            background-color: #252526;
+            alternate-background-color: #2b2b2b;
+            border: 1px solid #3c3c3c;
+            border-radius: 4px;
+            gridline-color: #3c3c3c;
+        }
+        QDialog QHeaderView::section {
+            background-color: #2d2d2d;
+            color: #c0c0c0;
+            padding: 4px 6px;
+            border: none;
+            border-bottom: 1px solid #3c3c3c;
+            border-right: 1px solid #3c3c3c;
+            font-weight: 600;
+        }
+        /* Dep warning label */
+        QLabel[class="dep-warning"] {
+            background-color: #3a2a00;
+            color: #ffcc66;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        /* Removal details header */
+        QLabel[class="removal-header"] {
+            font-size: 14px;
+            font-weight: 600;
+            color: #e0e0e0;
+        }
+        /* Total reclaimable label */
+        QLabel[class="total-label"] {
+            font-size: 13px;
+            color: #7ee787;
+            font-weight: 600;
+        }
+        /* History header */
+        QLabel[class="history-header"] {
+            font-size: 14px;
+            font-weight: 600;
+            color: #e0e0e0;
         }
     """)

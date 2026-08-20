@@ -147,20 +147,3 @@ COL_NAME = 1
 COL_SIZE = 2
 COL_TYPE = 3
 COL_DESC = 4
-
-_PROGRESS_STYLE = """
-    QProgressDialog {
-        background-color: #1e1e1e;
-        color: #e0e0e0;
-    }
-    QProgressBar {
-        border: 1px solid #3c3c3c;
-        border-radius: 4px;
-        background-color: #252526;
-        text-align: center;
-    }
-    QProgressBar::chunk {
-        background-color: #58a6ff;
-        border-radius: 3px;
-    }
-"""
