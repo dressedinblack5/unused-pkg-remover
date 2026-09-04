@@ -8,4 +8,14 @@ dist/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.hypothesis/
 .playwright-mcp/
+.coverage
+coverage.xml
+htmlcov/
+.omo/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
