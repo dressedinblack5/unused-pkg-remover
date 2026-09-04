@@ -351,7 +351,7 @@ class OrphanCleaner(QMainWindow):
             worker.deleteLater()
         if thread is not None:
             thread.quit()
-            thread.wait(500)
+            thread.wait(2000)
             thread.deleteLater()
         setattr(self, thread_attr, None)
         setattr(self, worker_attr, None)
@@ -628,8 +628,9 @@ class OrphanCleaner(QMainWindow):
 
     def _cleanup_dependents_thread(self) -> None:
         self._cleanup_qthread("_dep_thread", "_dep_worker")
-        if self._dep_progress:
+        if self._dep_progress is not None:
             self._dep_progress.close()
+            self._dep_progress = None
 
     def _start_removal_thread(
         self, names: list[str], label: str, force: bool | None = None
@@ -663,7 +664,9 @@ class OrphanCleaner(QMainWindow):
         self._start_removal_thread([p["name"] for p in pkgs], f"Removing {len(pkgs)} packages...")
 
     def _on_removal_finished(self, success, error_msg) -> None:
-        self._progress.close()
+        if getattr(self, "_progress", None) is not None:
+            self._progress.close()
+            self._progress = None
         self.setEnabled(True)
 
         if success:
@@ -698,6 +701,7 @@ class OrphanCleaner(QMainWindow):
             self._cleanup_thread()
             self._removal_running = False
             self._force_attempted = False
+            self._load_packages()
 
     def _cleanup_thread(self) -> None:
         self._cleanup_qthread("_removal_thread", "_removal_worker")
@@ -749,9 +753,10 @@ class OrphanCleaner(QMainWindow):
         if item is None:
             return
         row = item.row()
-        if row == 0:
+        sel_item = self.table.item(row, COL_SELECT)
+        if sel_item is None:
             return
-        pkg_idx = self.table.item(row, COL_SELECT).data(Qt.UserRole)
+        pkg_idx = sel_item.data(Qt.UserRole)
         pkg = self.packages[pkg_idx]
 
         menu = QMenu(self)

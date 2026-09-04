@@ -104,6 +104,8 @@ class RemovalWorker(QObject):
     def _run_nonorphan(self) -> None:
         m = self.mode
         self.progress.emit(_REMOVAL_LABELS.get(m, "Removing..."))
+        if self._cancelled:
+            raise RemovalError("Cancelled")
         if m == "cache":
             remove_cache_packages(self.names, cancel_check=self._cancel_check)
         elif m == "flatpak":
@@ -111,15 +113,15 @@ class RemovalWorker(QObject):
         elif m == "aur-dep":
             remove_aur_deps(cancel_check=self._cancel_check)
         elif m == "aur-cache":
-            remove_aur_cache_packages(self.names)
+            remove_aur_cache_packages(self.names, cancel_check=self._cancel_check)
         elif m == "proton-prefix":
-            remove_orphaned_proton_prefixes(self.names)
+            remove_orphaned_proton_prefixes(self.names, cancel_check=self._cancel_check)
         elif m == "steam-runtime":
-            remove_obsolete_steam_runtimes(self.names)
+            remove_obsolete_steam_runtimes(self.names, cancel_check=self._cancel_check)
         elif m == "ollama":
             remove_ollama_models(self.names, cancel_check=self._cancel_check)
         elif m == "launcher-runner":
-            remove_stale_launcher_runners(self.names)
+            remove_stale_launcher_runners(self.names, cancel_check=self._cancel_check)
         elif m == "npm-cache":
             remove_npm_cache(cancel_check=self._cancel_check)
         elif m == "npm-stale":

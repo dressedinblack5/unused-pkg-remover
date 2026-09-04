@@ -123,8 +123,13 @@ def _get_orphan_names() -> list[str]:
 
 
 def _query_expac(package_names: list[str]) -> list[PackageDict]:
-    cmd = ["expac", "-Q", "%n|%l|%d|%m"] + package_names
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        cmd = ["expac", "-Q", "%n|%l|%d|%m"] + package_names
+        result = subprocess.run(cmd, capture_output=True, text=True)
+    except (FileNotFoundError, OSError):
+        return []
+    if result.returncode != 0:
+        return []
     packages: list[PackageDict] = []
     for line in result.stdout.splitlines():
         parts = line.split("|")
@@ -202,12 +207,12 @@ def _extract_cache_pkg_name(filename: str) -> str:
         if stem.endswith(arch):
             stem = stem[: -len(arch)]
             break
-    for _ in range(2):
-        idx = stem.rfind("-")
-        if idx > 0 and re.fullmatch(r"[\d.:]+", stem[idx + 1 :]):
-            stem = stem[:idx]
-        else:
-            break
+    idx = stem.rfind("-")
+    if idx > 0 and stem[idx + 1 :].isdigit():
+        stem = stem[:idx]
+    idx = stem.rfind("-")
+    if idx > 0 and any(c.isdigit() for c in stem[idx + 1 :]):
+        stem = stem[:idx]
     return stem.lower()
 
 
@@ -249,7 +254,7 @@ def get_cache_packages() -> list[PackageDict]:
             size=sum(e["size"] for e in entries),
             desc=(
                 f"{len(entries)} cached version(s)"
-                + (", not installed" if not entries[0]["installed"] else "")
+                + ("" if any(e["installed"] for e in entries) else ", not installed")
             ),
             type_tag="cache",
         )
@@ -259,15 +264,30 @@ def get_cache_packages() -> list[PackageDict]:
 
 
 def _parse_human_size(s: str) -> int:
-    s = s.strip().lower()
-    for unit, mul in [("kb", 1024), ("mb", 1024**2), ("gb", 1024**3), ("tb", 1024**4)]:
-        if s.endswith(unit):
+    t = s.strip().lower().replace(" ", "")
+    for unit, mul in [
+        ("tib", 1024**4),
+        ("gib", 1024**3),
+        ("mib", 1024**2),
+        ("kib", 1024),
+        ("tb", 1024**4),
+        ("gb", 1024**3),
+        ("mb", 1024**2),
+        ("kb", 1024),
+        ("t", 1024**4),
+        ("g", 1024**3),
+        ("m", 1024**2),
+        ("k", 1024),
+        ("b", 1),
+    ]:
+        if t.endswith(unit):
+            num = t[: -len(unit)].rstrip(".")
             try:
-                return int(float(s[: -len(unit)].strip().rstrip(".")) * mul)
+                return int(float(num) * mul)
             except ValueError:
                 return 0
     try:
-        return int(s)
+        return int(float(t))
     except ValueError:
         return 0
 
@@ -278,11 +298,8 @@ def get_unused_flatpaks() -> list[PackageDict]:
     env = {**os.environ, "LANG": "C"}
 
     names: list[str] = []
-    # flatpak list --unused added in flatpak 1.14.
-    # Try it first; if flatpak doesn't recognise --unused, fall back to
-    # parsing the output of "flatpak uninstall --unused" with simulated "n".
     result = subprocess.run(
-        ["flatpak", "list", "--unused"],
+        ["flatpak", "list", "--unused", "--app", "--columns=application"],
         capture_output=True,
         text=True,
         env=env,
@@ -291,7 +308,12 @@ def get_unused_flatpaks() -> list[PackageDict]:
         stdout = result.stdout if isinstance(result.stdout, str) else ""
         for line in stdout.splitlines():
             ls = line.strip()
-            if ls:
+            if not ls:
+                continue
+            token = ls.split()[0]
+            if re.fullmatch(r"[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+", token):
+                names.append(token)
+            elif ls and "." in ls:
                 names.append(ls)
     elif result.stderr and "unknown option" in result.stderr.lower():
         # Fallback for older flatpak versions (< 1.14):
@@ -309,7 +331,9 @@ def get_unused_flatpaks() -> list[PackageDict]:
             ls = line.strip()
             m = re.match(r"\s*\d+\.\s+(.+)", ls)
             if m:
-                names.append(m.group(1))
+                token = m.group(1).split()[0]
+                if "." in token:
+                    names.append(token)
         if not names and result.returncode != 0:
             stderr = result.stderr if isinstance(result.stderr, str) else ""
             if stderr:
@@ -357,7 +381,8 @@ def get_broken_packages() -> list[PackageDict]:
     names: list[str] = []
     descs: dict[str, str] = {}
     for line in result.stdout.splitlines():
-        if "missing" in line or "ERROR" in line:
+        low = line.lower()
+        if "missing" in low or "error" in low:
             name = line.split(":")[0].strip()
             desc = line.split(":", 1)[-1].strip() if ":" in line else "Broken package"
             names.append(name)
@@ -372,13 +397,14 @@ def get_broken_packages() -> list[PackageDict]:
         )
         if size_result.returncode == 0:
             seen = size_result.stdout.splitlines()
-            for i in range(min(len(seen), len(names))):
-                s = seen[i].strip()
-                sizes[i] = int(s) if s.isdigit() else 0
+            for i in range(len(names)):
+                if i < len(seen):
+                    s = seen[i].strip()
+                    sizes[i] = int(s) if s.isdigit() else 0
 
     packages = [
         _make_package(name=n, size=s, desc=descs[n], type_tag="broken")
-        for n, s in zip(names, sizes, strict=True)
+        for n, s in zip(names, sizes, strict=False)
     ]
     return _sort_by_size_desc(packages)
 
@@ -392,7 +418,11 @@ def get_aur_build_deps() -> list[PackageDict]:
         return []
 
     packages: list[PackageDict] = []
-    for pkg in _query_expac(orphans):
+    try:
+        expac_pkgs = _query_expac(orphans)
+    except OSError:
+        return []
+    for pkg in expac_pkgs:
         if pkg["name"].lower() in aur_pkgs:
             packages.append(
                 _make_package(
@@ -487,15 +517,16 @@ def get_orphaned_proton_prefixes() -> list[PackageDict]:
         for mf in (lib_path / "steamapps").glob("appmanifest_*.acf"):
             try:
                 text = mf.read_text()
-                for line in text.splitlines():
-                    ls = line.strip()
-                    if ls.startswith('"appid"'):
-                        appid = ls.split('"')[3] if ls.count('"') >= 4 else ""
-                        if appid.isdigit():
-                            installed.add(appid)
-                        break
             except OSError:
                 continue
+            for line in text.splitlines():
+                ls = line.strip()
+                if ls.startswith('"appid"'):
+                    parts = ls.split('"')
+                    appid = parts[3] if len(parts) >= 4 else ""
+                    if appid.isdigit():
+                        installed.add(appid)
+                        break
 
     packages: list[PackageDict] = []
     seen_appids: set[str] = set()
@@ -535,26 +566,27 @@ def get_obsolete_steam_runtimes() -> list[PackageDict]:
         for mf in (lib_path / "steamapps").glob("appmanifest_*.acf"):
             try:
                 text = mf.read_text()
-                for line in text.splitlines():
-                    ls = line.strip()
-                    if ls.startswith('"installdir"'):
-                        dirname = ls.split('"')[3] if ls.count('"') >= 4 else ""
-                        if dirname:
-                            installed_stems.add(dirname.lower())
-                        break
             except OSError:
                 continue
+            for line in text.splitlines():
+                ls = line.strip()
+                if ls.startswith('"installdir"'):
+                    parts = ls.split('"')
+                    dirname = parts[3] if len(parts) >= 4 else ""
+                    if dirname:
+                        installed_stems.add(dirname.lower())
+                    break
 
     packages: list[PackageDict] = []
     seen_names: set[str] = set()
-    runtime_keywords = (
+    runtime_prefixes = (
         "proton",
-        "steamlinuxruntime",
-        "steam run",
-        "runtime",
-        "sdk",
-        "redistributable",
-        "linux runtime",
+        "steaml",
+        "steamrt",
+        "steamworks",
+        "soldier",
+        "sniper",
+        "scout",
     )
 
     for lib_path in library_paths:
@@ -565,7 +597,7 @@ def get_obsolete_steam_runtimes() -> list[PackageDict]:
             if not d.is_dir():
                 continue
             name_lower = d.name.lower()
-            if not any(kw in name_lower for kw in runtime_keywords):
+            if not name_lower.startswith(runtime_prefixes):
                 continue
             if name_lower in installed_stems:
                 continue
@@ -623,16 +655,26 @@ def get_ollama_models() -> list[PackageDict]:
 
     packages: list[PackageDict] = []
     lines = result.stdout.splitlines()
+    size_units = {"b", "k", "m", "g", "t", "kb", "mb", "gb", "tb", "kib", "mib", "gib", "tib"}
     for line in lines[1:]:
         if not line.strip():
             continue
         parts = line.split()
-        if len(parts) < 4:
+        if len(parts) < 3:
             continue
         name = parts[0]
-        # ollama list SIZE column is two tokens: number + unit, e.g. "1.2" "GB"
-        size_str = f"{parts[2]} {parts[3]}"
-        size = _parse_human_size(size_str)
+        size = 0
+        for i in range(1, len(parts) - 1):
+            if re.fullmatch(r"\d+(\.\d+)?", parts[i]) and parts[i + 1].lower() in size_units:
+                size = _parse_human_size(f"{parts[i]} {parts[i + 1]}")
+                break
+        else:
+            for tok in parts[1:]:
+                size = _parse_human_size(tok)
+                if size:
+                    break
+        if not size and len(parts) >= 4:
+            size = _parse_human_size(f"{parts[2]} {parts[3]}")
         packages.append(_make_package(name=name, size=size, desc="Ollama model", type_tag="ollama"))
 
     return _sort_by_size_desc(packages)

@@ -139,7 +139,12 @@ def get_available_modes() -> list[tuple[str, str]]:
 
 
 def get_ignore_file() -> Path:
-    return Path.cwd() / ".unused-ignore"
+    return Path.home() / ".unused-ignore"
+
+
+def reset_available_modes_cache() -> None:
+    global _AVAILABLE_MODES_CACHE
+    _AVAILABLE_MODES_CACHE = None
 
 
 COL_SELECT = 0

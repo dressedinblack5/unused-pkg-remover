@@ -14,7 +14,12 @@ _CACHE_ARCHES = (
 
 
 def format_size(size_bytes: int) -> str:
-    size = float(size_bytes)
+    try:
+        size = float(size_bytes)
+    except (TypeError, ValueError):
+        return "0.0 B"
+    if size < 0:
+        size = 0.0
     for unit in ["B", "KB", "MB", "GB", "TB"]:
         if size < 1024:
             return f"{size:.1f} {unit}"

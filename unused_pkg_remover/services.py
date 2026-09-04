@@ -21,17 +21,47 @@ def _validate_path_within_root(target: Path, allowed_root: Path) -> bool:
     try:
         resolved_target = target.resolve()
         resolved_root = allowed_root.resolve()
-        return str(resolved_target).startswith(str(resolved_root))
-    except (OSError, RuntimeError):
+        try:
+            return resolved_target.is_relative_to(resolved_root)
+        except AttributeError:
+            try:
+                resolved_target.relative_to(resolved_root)
+                return True
+            except ValueError:
+                return False
+    except (OSError, RuntimeError, ValueError):
         return False
 
 
-def _sanitize_package_name(name: str) -> str:
-    """Sanitize package name to prevent injection - allow only safe chars."""
+def _sanitize_package_name(name: str, *, allow_slash: bool = False) -> str:
+    """Sanitize package name to prevent injection - allow only safe chars.
+
+    Rejects leading '-' (option injection). '/' only when allow_slash=True
+    (e.g. ollama namespaces); filesystem entries must use
+    _sanitize_path_component instead.
+    """
     import re
 
-    if not re.fullmatch(r"[A-Za-z0-9._@:+/-]+", name):
+    pattern = (
+        r"[A-Za-z0-9._@+:][A-Za-z0-9._@+:\-/]*"
+        if allow_slash
+        else (r"[A-Za-z0-9._@+:][A-Za-z0-9._@+:\-]*")
+    )
+    if not name or not re.fullmatch(pattern, name):
         raise RemovalError(f"Invalid package name: {name}")
+    if ".." in name:
+        raise RemovalError(f"Invalid package name: {name}")
+    return name
+
+
+def _sanitize_path_component(name: str) -> str:
+    """Validate a single filesystem path component (no separators, no traversal)."""
+    if not name or name in (".", ".."):
+        raise RemovalError(f"Invalid path component: {name!r}")
+    if "/" in name or "\\" in name or "\x00" in name:
+        raise RemovalError(f"Invalid path component: {name!r}")
+    if name != name.strip() or ".." in name.split():
+        raise RemovalError(f"Invalid path component: {name!r}")
     return name
 
 
@@ -98,19 +128,27 @@ def log_removal(packages: list[dict[str, str | int | bool]]) -> None:
 
 
 def add_to_ignore(ignore_file_path: Path, package_names: list[str]) -> None:
+    import contextlib
+
+    with contextlib.suppress(OSError):
+        ignore_file_path.parent.mkdir(parents=True, exist_ok=True)
     with open(ignore_file_path, "a") as f:
         for name in package_names:
             f.write(f"{name}\n")
 
 
 def remove_cache_packages(names: list[str], *, cancel_check: CancelCheck | None = None) -> None:
+    from .constants import _CACHE_EXTS
+
     for name in names:
         _sanitize_package_name(name)
     cache_dir = Path("/var/cache/pacman/pkg")
     files = []
     for name in names:
-        pattern = re.compile(rf"^{re.escape(name)}-\d")
+        pattern = re.compile(rf"^{re.escape(name)}-\d", re.IGNORECASE)
         for f in cache_dir.iterdir():
+            if not any(f.name.endswith(ext) for ext in _CACHE_EXTS):
+                continue
             if pattern.match(f.name):
                 target = cache_dir / f.name
                 if _validate_path_within_root(target, cache_dir):
@@ -122,7 +160,7 @@ def remove_cache_packages(names: list[str], *, cancel_check: CancelCheck | None 
 
 def remove_flatpak_packages(names: list[str], *, cancel_check: CancelCheck | None = None) -> None:
     for name in names:
-        _sanitize_package_name(name)
+        _sanitize_package_name(name, allow_slash=True)
     if cancel_check and cancel_check():
         raise RemovalError("Cancelled")
     try:
@@ -151,10 +189,10 @@ def remove_aur_deps(*, cancel_check: CancelCheck | None = None) -> None:
         raise RemovalError(e.stderr or str(e)) from e
 
 
-def remove_aur_cache_packages(names: list[str]) -> None:
+def remove_aur_cache_packages(names: list[str], *, cancel_check: CancelCheck | None = None) -> None:
     """Remove AUR build source directories from yay/paru cache."""
     for name in names:
-        _sanitize_package_name(name)
+        _sanitize_path_component(name)
     cache_roots = [Path.home() / ".cache" / "yay"]
     paru_cache = Path.home() / ".cache" / "paru"
     if paru_cache.exists():
@@ -164,6 +202,8 @@ def remove_aur_cache_packages(names: list[str]) -> None:
         cache_roots.append(paru_root)
     errors = []
     for name in names:
+        if cancel_check and cancel_check():
+            raise RemovalError("Cancelled")
         for root in cache_roots:
             target = root / name
             if target.exists():
@@ -178,11 +218,16 @@ def remove_aur_cache_packages(names: list[str]) -> None:
         raise RemovalError("; ".join(errors))
 
 
-def remove_orphaned_proton_prefixes(names: list[str]) -> None:
+def remove_orphaned_proton_prefixes(
+    names: list[str], *, cancel_check: CancelCheck | None = None
+) -> None:
     library_paths = get_steam_library_paths()
     errors = []
     for name in names:
-        _sanitize_package_name(name)
+        if not name.isdigit():
+            raise RemovalError(f"Invalid Proton prefix id: {name}")
+        if cancel_check and cancel_check():
+            raise RemovalError("Cancelled")
         for lib_path in library_paths:
             target = lib_path / "steamapps" / "compatdata" / name
             if target.exists():
@@ -198,11 +243,15 @@ def remove_orphaned_proton_prefixes(names: list[str]) -> None:
         raise RemovalError("; ".join(errors))
 
 
-def remove_obsolete_steam_runtimes(names: list[str]) -> None:
+def remove_obsolete_steam_runtimes(
+    names: list[str], *, cancel_check: CancelCheck | None = None
+) -> None:
     library_paths = get_steam_library_paths()
     errors = []
     for name in names:
-        _sanitize_package_name(name)
+        _sanitize_path_component(name)
+        if cancel_check and cancel_check():
+            raise RemovalError("Cancelled")
         for lib_path in library_paths:
             target = lib_path / "steamapps" / "common" / name
             if target.exists():
@@ -220,7 +269,7 @@ def remove_obsolete_steam_runtimes(names: list[str]) -> None:
 
 def remove_ollama_models(names: list[str], *, cancel_check: CancelCheck | None = None) -> None:
     for name in names:
-        _sanitize_package_name(name)
+        _sanitize_package_name(name, allow_slash=True)
     if cancel_check and cancel_check():
         raise RemovalError("Cancelled")
     try:
@@ -234,53 +283,61 @@ def remove_ollama_models(names: list[str], *, cancel_check: CancelCheck | None =
         raise RemovalError(e.stderr or str(e)) from e
 
 
-def remove_stale_launcher_runners(names: list[str]) -> None:
+def remove_stale_launcher_runners(
+    names: list[str], *, cancel_check: CancelCheck | None = None
+) -> None:
     _home = Path.home()
-    lutris_root = _home / ".local" / "share" / "lutris" / "runners"
-    heroic_wine = _home / ".config" / "heroic" / "tools" / "runners" / "wine"
-    heroic_proton = _home / ".config" / "heroic" / "tools" / "runners" / "proton"
-    bottles_root = _home / ".local" / "share" / "bottles" / "runners"
-    prefix_roots: dict[str, Path] = {
-        "lutris:": lutris_root,
-        "heroic:wine/": heroic_wine,
-        "heroic:proton/": heroic_proton,
-        "bottles:": bottles_root,
+    lutris_roots = [_home / ".local" / "share" / "lutris" / "runners"]
+    heroic_wine_roots = [_home / ".config" / "heroic" / "tools" / "runners" / "wine"]
+    heroic_proton_roots = [_home / ".config" / "heroic" / "tools" / "runners" / "proton"]
+    bottles_roots = [_home / ".local" / "share" / "bottles" / "runners"]
+    prefix_roots: dict[str, list[Path]] = {
+        "lutris:": lutris_roots,
+        "heroic:wine/": heroic_wine_roots,
+        "heroic:proton/": heroic_proton_roots,
+        "bottles:": bottles_roots,
     }
 
-    # Flatpak installs
+    # Flatpak installs (kept alongside native so both stay removable)
     var = _home / ".var" / "app"
     flatpak_lutris = var / "net.lutris.Lutris" / "data" / "lutris" / "runners"
     if flatpak_lutris.exists():
-        prefix_roots["lutris:"] = flatpak_lutris  # overrides native if Flatpak exists
+        prefix_roots["lutris:"].append(flatpak_lutris)
     flatpak_bottles = var / "com.usebottles.bottles" / "data" / "bottles" / "runners"
     if flatpak_bottles.exists():
-        prefix_roots["bottles:"] = flatpak_bottles
+        prefix_roots["bottles:"].append(flatpak_bottles)
     heroic_base = var / "com.heroicgameslauncher.hgl" / "config" / "heroic" / "tools" / "runners"
     flatpak_heroic_wine = heroic_base / "wine"
     flatpak_heroic_proton = heroic_base / "proton"
     if flatpak_heroic_wine.exists():
-        prefix_roots["heroic:wine/"] = flatpak_heroic_wine
+        prefix_roots["heroic:wine/"].append(flatpak_heroic_wine)
     if flatpak_heroic_proton.exists():
-        prefix_roots["heroic:proton/"] = flatpak_heroic_proton
+        prefix_roots["heroic:proton/"].append(flatpak_heroic_proton)
     errors = []
     for name in names:
-        _sanitize_package_name(name)
-        matched = None
-        for prefix, root in prefix_roots.items():
+        if cancel_check and cancel_check():
+            raise RemovalError("Cancelled")
+        matched_roots = None
+        remainder = ""
+        for prefix, roots in prefix_roots.items():
             if name.startswith(prefix):
-                target = root / name[len(prefix) :]
-                matched = prefix
+                remainder = name[len(prefix) :]
+                matched_roots = roots
                 break
-        if matched is None:
+        if matched_roots is None:
             continue
-        if target.exists():
-            if _validate_path_within_root(target, root):
-                try:
-                    shutil.rmtree(target)
-                except OSError as e:
-                    errors.append(str(e))
-            else:
-                errors.append(f"Path traversal blocked: {target}")
+        _sanitize_path_component(remainder)
+        for root in matched_roots:
+            target = root / remainder
+            if target.exists():
+                if _validate_path_within_root(target, root):
+                    try:
+                        shutil.rmtree(target)
+                    except OSError as e:
+                        errors.append(str(e))
+                else:
+                    errors.append(f"Path traversal blocked: {target}")
+                break
     if errors:
         raise RemovalError("; ".join(errors))
 
@@ -311,7 +368,7 @@ def remove_stale_node_modules(names: list[str], *, cancel_check: CancelCheck | N
     ]
     errors = []
     for name in names:
-        _sanitize_package_name(name)
+        _sanitize_path_component(name)
         found = False
         for scan_dir in scan_dirs:
             if not scan_dir.exists():
